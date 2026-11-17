@@ -45,25 +45,33 @@ dipanggil berkala karena tidak memakan kuota D1:
 
 | Endpoint | Jalur di Worker | Bila dipasang di bawah prefix `/api` | Fungsi |
 |---|---|---|---|
-| Liveness | `GET /health` | `GET /api/health` | Menjawab bila Worker hidup |
-| Latensi | `GET /ping` | `GET /api/ping` | Target ukur latensi HTTP, respons kecil |
+| Liveness | `GET /api/health` | `GET /api/health` | Menjawab bila Worker hidup |
+| Latensi | `GET /api/ping` | `GET /api/ping` | Target ukur latensi HTTP, respons kecil |
 
 Respons yang diharapkan:
 
 ```json
-// GET /health (atau /api/health)
-{ "status": "ok" }
+// GET /api/health
+{
+  "success": true,
+  "data": { "status": "ok" },
+  "meta": { "timestamp": "2026-11-17T15:30:00.000Z" }
+}
 
-// GET /ping (atau /api/ping)
-{ "ok": true, "t": 1730000000000 }
+// GET /api/ping
+{
+  "success": true,
+  "data": { "ok": true, "t": 1763489400000 },
+  "meta": { "timestamp": "2026-11-17T15:30:00.000Z" }
+}
 ```
 
 Keterangan:
 
-- `/health` adalah liveness murni: ia tidak menyentuh D1.
-  Bila `/health` menjawab tetapi data gagal dimuat, masalahnya ada
+- `/api/health` adalah liveness murni: ia tidak menyentuh D1.
+  Bila `/api/health` menjawab tetapi data gagal dimuat, masalahnya ada
   di D1 atau di rute data, bukan di Worker.
-- `/ping` dipakai dua hal: pemantau uptime mengukur latensi HTTP
+- `/api/ping` dipakai dua hal: pemantau uptime mengukur latensi HTTP
   dari responsnya, dan fitur tes WiFi di frontend memakai endpoint
   yang sama untuk mengukur latensi pengguna.
 - Kedua endpoint bersifat publik (tanpa sesi) agar pemantau
@@ -75,8 +83,8 @@ Keterangan:
 |---|---|---|---|
 | Pages — landing `/` | 5 menit | 10 detik | 2 probe gagal berturut-turut |
 | Vercel — landing `/` | 5 menit | 10 detik | 2 probe gagal berturut-turut |
-| Worker — `/health` | 5 menit | 10 detik | 2 probe gagal berturut-turut |
-| Worker — `/ping` (latensi) | 5 menit | 10 detik | 3 probe berturut-turut di atas 5 detik, atau gagal |
+| Worker — `/api/health` | 5 menit | 10 detik | 2 probe gagal berturut-turut |
+| Worker — `/api/ping` (latensi) | 5 menit | 10 detik | 3 probe berturut-turut di atas 5 detik, atau gagal |
 
 Alasan interval 5 menit: cukup cepat agar owner tahu dalam hitungan
 menit, dan cukup hemat — 4 target × 12 probe per jam × 24 jam =
@@ -181,7 +189,7 @@ Worker mencatat log terstruktur untuk setiap request
 (lihat `ARCHITECTURE.md` bagian 8):
 
 - Waktu (ISO 8601, UTC).
-- Rute yang dipanggil (misalnya `/wifi-reports`).
+- Rute yang dipanggil (misalnya `/api/wifi-reports`).
 - Kode status HTTP respons.
 - Durasi pemrosesan dalam milidetik.
 - Kode galat bila ada (misalnya `RATE_LIMIT`, `D1_ERROR`).
@@ -207,7 +215,7 @@ Pola yang perlu diperhatikan saat membaca log:
 3. **Lonjakan 429**: rate limit bekerja — periksa apakah itu
    penyalahgunaan (satu IP/pengguna) atau batas yang terlalu ketat
    untuk pemakaian normal.
-4. **Galat hanya di `/ai/diagnose`**: kemungkinan besar Gemini
+4. **Galat hanya di `/api/ai/diagnose`**: kemungkinan besar Gemini
    bermasalah atau kunci bermasalah; fitur lain seharusnya tetap
    jalan.
 5. **Durasi tiba-tiba naik** di semua rute: kemungkinan D1 lambat
@@ -251,8 +259,8 @@ Pola yang perlu diperhatikan saat membaca log:
 |---|---|---|
 | Pages mati (2 probe gagal) | Tinggi | Segera |
 | Vercel mati (2 probe gagal) | Sedang | Segera |
-| Worker `/health` mati (2 probe gagal) | Tinggi | Segera |
-| Latensi `/ping` > 5 detik, 3x berturut-turut | Sedang | Segera |
+| Worker `/api/health` mati (2 probe gagal) | Tinggi | Segera |
+| Latensi `/api/ping` > 5 detik, 3x berturut-turut | Sedang | Segera |
 | Kuota Workers/D1/KV mencapai 80% | Sedang | Segera, sekali per hari per layanan |
 | Kuota habis (terdeteksi dari galat massal) | Tinggi | Segera |
 | Error rate 5xx di atas ambang (bagian 6) | Tinggi | Segera |
@@ -314,8 +322,8 @@ Penyebab sementara: (diisi setelah runbook dijalankan).
 |---|---|---|---|
 | Uptime Pages | Persentase probe landing Pages yang berhasil dalam sebulan | Log probe cron | ≥ 99% per bulan |
 | Uptime Vercel | Persentase probe landing Vercel yang berhasil dalam sebulan | Log probe cron | ≥ 99% per bulan |
-| Uptime Worker API | Persentase probe `/health` yang berhasil dalam sebulan | Log probe cron | ≥ 99% per bulan |
-| Latensi p95 API | Latensi di bawahnya terdapat 95% dari semua respons `/ping` dalam sehari | Log probe cron (kumpulkan semua sampel latensi harian, ambil persentil ke-95) | ≤ 1 detik |
+| Uptime Worker API | Persentase probe `/api/health` yang berhasil dalam sebulan | Log probe cron | ≥ 99% per bulan |
+| Latensi p95 API | Latensi di bawahnya terdapat 95% dari semua respons `/api/ping` dalam sehari | Log probe cron (kumpulkan semua sampel latensi harian, ambil persentil ke-95) | ≤ 1 detik |
 | Error rate API | Persentase respons 5xx dari total request Worker dalam sehari | Dashboard Cloudflare / log Worker | < 1% per hari |
 | Pemakaian kuota Workers | Request hari ini ÷ 100.000 | Dashboard / GraphQL Analytics | < 80% pada pukul 19:00 WIB |
 | Pemakaian kuota D1 baca | Baris dibaca hari ini ÷ 5.000.000 | Dashboard / GraphQL Analytics | < 80% pada pukul 19:00 WIB |
@@ -330,8 +338,8 @@ Catatan:
   mengabaikan 5% sampel terlambat (gangguan sesaat) sehingga lebih
   jujur daripada rata-rata.
 - **Error rate** dihitung dari log Worker, bukan dari probe:
-  probe hanya memanggil `/health` dan `/ping`, sementara galat
-  nyata terjadi di rute data (`/wifi-reports`, `/ai/diagnose`,
+  probe hanya memanggil `/api/health` dan `/api/ping`, sementara galat
+  nyata terjadi di rute data (`/api/wifi-reports`, `/api/ai/diagnose`,
   dan lain-lain).
 - Semua metrik dihitung dari data yang benar-benar terukur (log
   probe, log Worker, dashboard). Tidak ada metrik yang diisi
@@ -358,7 +366,7 @@ timeout.
      sisi pemantau saja.
    - Buka URL Vercel: bila Vercel hidup, frontend masih tersedia
      lewat mirror.
-   - Buka `/health` Worker: bila Worker hidup, backend dan data
+   - Buka `/api/health` Worker: bila Worker hidup, backend dan data
      aman — yang mati hanya hosting frontend utama.
    - Periksa status Cloudflare (halaman status resmi Cloudflare):
      bila ada insiden platform, ini di luar kendali proyek.
@@ -383,7 +391,7 @@ timeout.
 ### 7.2 Worker galat 1027 (Worker melewati batas harian)
 
 **Gejala:** respons API mengembalikan galat Cloudflare 1027;
-`/health` gagal; log menunjukkan request ditolak karena batas
+`/api/health` gagal; log menunjukkan request ditolak karena batas
 harian terlampaui. (Kode 1027 adalah kode galat Cloudflare untuk
 Worker yang melewati batas request harian paketnya.)
 
@@ -392,7 +400,7 @@ Worker yang melewati batas request harian paketnya.)
      request hari ini. Bila mendekati atau mencapai 100.000,
      diagnosis terkonfirmasi.
    - Periksa log rute: rute mana yang menyumbang lonjakan
-     (apakah `/ping` dipanggil berlebihan, ada banjir dari satu
+     (apakah `/api/ping` dipanggil berlebihan, ada banjir dari satu
      IP, atau ada loop pemanggilan di frontend).
    - Pastikan ini bukan galat 1027 karena sebab lain: bila jumlah
      request jauh di bawah 100.000, penyebabnya bukan kuota —
@@ -406,12 +414,12 @@ Worker yang melewati batas request harian paketnya.)
      di rancangan — `ARCHITECTURE.md` bagian 6.1) atau blokir
      sementara bila platform menyediakan.
    - Bila lonjakan berasal dari bug frontend (misalnya loop
-     pemanggilan `/ping`): perbaiki dan deploy frontend — tetapi
+     pemanggilan `/api/ping`): perbaiki dan deploy frontend — tetapi
      ingat, deploy frontend tidak mengembalikan kuota Worker yang
      sudah habis; ini hanya mencegah kejadian berulang besok.
 3. **Perbaikan dan verifikasi.**
    - Kuota reset otomatis pukul 00:00 UTC (07:00 WIB). Setelah
-     reset, verifikasi `/health` menjawab OK, lalu jalankan uji
+     reset, verifikasi `/api/health` menjawab OK, lalu jalankan uji
      smoke (masuk, simpan satu laporan, buka riwayat).
    - Bila kejadian berulang: turunkan beban request — kurangi
      frekuensi pemanggilan API dari frontend, perketat rate limit,
@@ -422,7 +430,7 @@ Worker yang melewati batas request harian paketnya.)
 
 ### 7.3 Kuota D1 habis (baca atau tulis mencapai limit harian)
 
-**Gejala:** `/health` tetap OK (tidak menyentuh D1), tetapi semua
+**Gejala:** `/api/health` tetap OK (tidak menyentuh D1), tetapi semua
 rute data gagal: login gagal, riwayat tidak termuat, simpan data
 gagal. Log Worker menunjukkan galat D1 massal.
 
@@ -481,14 +489,14 @@ terkirim. Pages (utama) biasanya tetap hidup.
 
 ### 7.5 Diagnosis AI tidak tersedia (Gemini bermasalah)
 
-**Gejala:** rute `/ai/diagnose` mengembalikan galat atau timeout,
+**Gejala:** rute `/api/ai/diagnose` mengembalikan galat atau timeout,
 sementara rute lain normal. Pengguna melihat pesan jujur
 "Diagnosis AI sedang tidak tersedia, coba lagi nanti"
 (sesuai `PRODUCT.md` bagian 4.6).
 
 1. **Konfirmasi.**
-   - Periksa log Worker: galat hanya di `/ai/diagnose` atau
-     merata? Bila hanya di `/ai/diagnose`, masalahnya di jalur
+   - Periksa log Worker: galat hanya di `/api/ai/diagnose` atau
+     merata? Bila hanya di `/api/ai/diagnose`, masalahnya di jalur
      Gemini (kunci, kuota Gemini, atau layanan Gemini).
    - Periksa status layanan Gemini (halaman status resmi Google
      Cloud / AI Studio).
@@ -511,7 +519,7 @@ log menunjukkan lonjakan 401 di rute yang butuh sesi.
 
 1. **Konfirmasi.**
    - Coba masuk dengan akun owner: bila gagal, periksa apakah
-     `/health` OK dan D1 OK (bila D1 bermasalah, ini insiden 7.3,
+     `/api/health` OK dan D1 OK (bila D1 bermasalah, ini insiden 7.3,
      bukan 7.6).
    - Periksa deploy terakhir: apakah ada perubahan pada kode sesi,
      cookie, atau verifikasi token?
@@ -536,7 +544,7 @@ pengukuran dimulai setelah pemantau berjalan.
 | Uptime Pages | ≥ 99% per bulan | Boleh mati total sampai sekitar 7 jam 18 menit per bulan |
 | Uptime Vercel | ≥ 99% per bulan | Sama seperti Pages |
 | Uptime Worker API | ≥ 99% per bulan | Sama seperti Pages |
-| Latensi p95 API (`/ping`) | ≤ 1 detik | 95% respons lebih cepat dari 1 detik |
+| Latensi p95 API (`/api/ping`) | ≤ 1 detik | 95% respons lebih cepat dari 1 detik |
 | Error rate API (5xx) | < 1% per hari | Kurang dari 1 dari 100 request mengembalikan galat server |
 | Waktu deteksi insiden | ≤ 10 menit | Alert terkirim paling lambat 10 menit setelah layanan mati (2 probe × 5 menit) |
 | Waktu pemulihan (target, bukan janji) | Sebaiknya < 1 jam untuk insiden yang bisa diperbaiki sendiri (rollback deploy); insiden platform mengikuti pemulihan penyedia | Owner tidak menunggu tanpa kabar: bila pemulihan butuh waktu lama, kirim kabar perkembangan |
@@ -622,7 +630,7 @@ ini ditulis). Log ini adalah bahan tinjauan mingguan dan bulanan.
 | Ambang 80% (80.000 / 4.000.000 / 80.000 / 800 / 400 MB) | Hitung langsung: 80% × limit di atas | 17 Nov 2026 |
 | Beban probe ~1.152 request/hari | Hitung langsung: 4 target × 12 probe/jam × 24 jam | 17 Nov 2026 |
 | Uptime 99% ≈ 7 jam 18 menit mati/bulan | Hitung langsung: 30,44 hari × 24 jam × 1% | 17 Nov 2026 |
-| Endpoint `/health` dan `/ping` tanpa akses D1 | `ARCHITECTURE.md` bagian 3.6 | 17 Nov 2026 |
+| Endpoint `/api/health` dan `/api/ping` tanpa akses D1 | `ARCHITECTURE.md` bagian 3.6 | 17 Nov 2026 |
 | Rate limit (AI 20/hari, tulis 60/menit, PIN 5x lalu kunci 30 dtk) | `ARCHITECTURE.md` bagian 6.1 | 17 Nov 2026 |
 
 ## 12. Changelog dokumen

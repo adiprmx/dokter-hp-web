@@ -6,8 +6,10 @@ import { cariPanduan, PANDUAN } from "../data/panduan";
 // Langkah perbaikan memakai <ol> sungguhan (docs/seo.md §7).
 // Judul halaman dan deskripsi meta diperbarui lewat JavaScript
 // (Opsi B seo.md §1.1) sampai keputusan prerender diambil tim frontend.
-// Untuk panduan wifi-lemot, JSON-LD FAQPage (seo.md §5.2) dipasang
-// lewat <script> yang dibuat di efek — tanpa dangerouslySetInnerHTML.
+// JSON-LD FAQPage (seo.md §5.2) TIDAK dipasang di sini: injeksi
+// <script> dinamis mati di bawah CSP script-src (N-01, K-82) dan
+// tidak dapat di-hash karena isinya bergantung data halaman.
+// Structured data FAQ kembali bersama prerender pasca-v1.0 (K-22).
 
 const FOKUS =
   "focus-visible:outline focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-2";
@@ -32,30 +34,12 @@ export default function PanduanPage() {
     const deskripsiLama = meta?.content;
     if (meta) meta.content = panduan.deskripsi;
 
-    // JSON-LD FAQPage, hanya untuk panduan yang punya faq.
-    let script: HTMLScriptElement | null = null;
-    if (panduan.faq) {
-      script = document.createElement("script");
-      script.type = "application/ld+json";
-      script.id = "faq-jsonld";
-      script.textContent = JSON.stringify({
-        "@context": "https://schema.org",
-        "@type": "FAQPage",
-        mainEntity: panduan.faq.map((item) => ({
-          "@type": "Question",
-          name: item.pertanyaan,
-          acceptedAnswer: {
-            "@type": "Answer",
-            text: item.jawaban,
-          },
-        })),
-      });
-      document.head.appendChild(script);
-    }
+    // JSON-LD FAQPage tidak dipasang di sini (lihat komentar atas
+    // berkas): injeksi skrip dinamis diblokir CSP dan structured
+    // data FAQ kembali bersama prerender pasca-v1.0 (K-22).
 
     return () => {
       if (meta && deskripsiLama !== undefined) meta.content = deskripsiLama;
-      script?.remove();
     };
   }, [panduan]);
 

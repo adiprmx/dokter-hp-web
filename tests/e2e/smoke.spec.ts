@@ -26,8 +26,9 @@ test.describe('Landing', () => {
     ).toBeVisible();
 
     // Tes WiFi tanpa akun ditawarkan di landing (PRODUCT.md 4.1).
+    // Elemen ini adalah tautan (<Link>), bukan <button> (perbaikan QA Wave 4).
     await expect(
-      page.getByRole('button', { name: /coba tes wifi tanpa akun/i }),
+      page.getByRole('link', { name: /coba tes wifi tanpa akun/i }),
     ).toBeVisible();
 
     // Tombol masuk/daftar tersedia.
@@ -41,8 +42,9 @@ test.describe('Halaman masuk', () => {
   }) => {
     await page.goto('/masuk');
 
+    // Tombol masuk adalah tautan <a> (bukan <button>) — perbaikan QA Wave 4.
     await expect(
-      page.getByRole('button', { name: /masuk dengan google/i }),
+      page.getByRole('link', { name: /masuk dengan google/i }),
     ).toBeVisible();
   });
 });
@@ -55,7 +57,7 @@ test.describe('Pengaman rute', () => {
     // (PRODUCT.md 5, ARCHITECTURE.md 4.1 langkah 7-8).
     await expect(page).toHaveURL(/\/masuk/);
     await expect(
-      page.getByRole('button', { name: /masuk dengan google/i }),
+      page.getByRole('link', { name: /masuk dengan google/i }),
     ).toBeVisible();
   });
 });

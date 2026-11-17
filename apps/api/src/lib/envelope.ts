@@ -74,6 +74,15 @@ export function sesiTerkunci(): ApiError {
   );
 }
 
+/** Galat 403 — tindakan sensitif wajib login ulang (autentikasi tidak segar, K-72). */
+export function loginUlangDiperlukan(): ApiError {
+  return new ApiError(
+    403,
+    'LOGIN_ULANG_DIPERLUKAN',
+    'Untuk keamanan, silakan masuk lagi sebelum menghapus akun.',
+  );
+}
+
 /** Galat 422 — teks konfirmasi hapus akun tidak cocok. */
 export function konfirmasiSalah(): ApiError {
   return new ApiError(

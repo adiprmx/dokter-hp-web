@@ -1,7 +1,9 @@
 // apps/api/src/ai/gemini.ts
 // Panggilan server-side ke Google Gemini API (v1beta generateContent).
 // Kunci API HANYA diterima lewat parameter (berasal dari secret Worker
-// GEMINI_API_KEY). File ini tidak pernah menyimpan, mencatat, atau
+// GEMINI_API_KEY) dan dikirim lewat header `x-goog-api-key` — TIDAK
+// PERNAH di query string URL (R-19: kunci di URL terekam di log
+// akses/proxy). File ini tidak pernah menyimpan, mencatat, atau
 // mencetak kunci. Detail galat dari Gemini tidak pernah diteruskan
 // mentah ke client.
 //
@@ -157,9 +159,9 @@ export function parseJawabanGemini(badan: unknown): string | null {
   return gabungan.slice(0, JAWABAN_MAKS_KARAKTER);
 }
 
-function bangunUrl(model: string, kunciApi: string): string {
+function bangunUrl(model: string): string {
   const dasar = 'https://generativelanguage.googleapis.com';
-  return `${dasar}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(kunciApi)}`;
+  return `${dasar}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 }
 
 /**
@@ -190,9 +192,13 @@ async function panggilSekali(
   try {
     let respons: Response;
     try {
-      respons = await fetchFn(bangunUrl(model, kunciApi), {
+      respons = await fetchFn(bangunUrl(model), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          // R-19: kunci API lewat header, bukan query string.
+          'x-goog-api-key': kunciApi,
+        },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: promptSistem }] },
           contents: [{ role: 'user', parts: [{ text: pesanPengguna }] }],

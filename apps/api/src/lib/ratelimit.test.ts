@@ -7,6 +7,7 @@ import {
   BATAS_EKSPOR_PER_HARI,
   BATAS_OAUTH_PER_MENIT,
   BATAS_TULIS_PER_MENIT,
+  bersihkanBatasKedaluwarsa,
   catatEkspor,
   cekDanCatat,
   detikSampaiKedaluwarsa,
@@ -54,6 +55,59 @@ describe('cekDanCatat', () => {
     // Penolakan tidak menambah hitungan: cek berikutnya tetap 3.
     const ditolak2 = await cekDanCatat(db, jendela, 3);
     expect(ditolak2.terpakai).toBe(3);
+  });
+
+  it('burst 20 paralel meloloskan tepat batas, tanpa over-rejection (regresi R-03)', async () => {
+    const db = new FakeD1({});
+    const jendela = jendelaMenit('oauth', '203.0.113.9', new Date('2026-11-18T10:30:00.000Z'));
+    const hasil = await Promise.all(
+      Array.from({ length: 20 }, () => cekDanCatat(db, jendela, 10)),
+    );
+    const diizinkan = hasil.filter((s) => s.diizinkan);
+    const ditolak = hasil.filter((s) => !s.diizinkan);
+    expect(diizinkan).toHaveLength(10);
+    expect(ditolak).toHaveLength(10);
+    // Hitungan akhir tepat 10 (implementasi lama: 20 lolos, tercatat 2).
+    const baris = db.baris('rate_limits');
+    expect(baris).toHaveLength(1);
+    expect(baris[0]?.jumlah).toBe(10);
+  });
+
+  it('pembersihan malas menghapus baris kedaluwarsa saat kunci baru dibuat (R-15)', async () => {
+    const sekarang = new Date();
+    const kemarin = new Date(sekarang.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const besok = new Date(sekarang.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    const db = new FakeD1({
+      rate_limits: [
+        {
+          kunci: 'tulis:user-lama:2026-11-01T09:00',
+          jumlah: 3,
+          jendela_mulai: '2026-11-01T09:00:00.000Z',
+          kedaluwarsa_pada: kemarin,
+        },
+        {
+          kunci: 'tulis:user-aktif:2099-01-01T10:30',
+          jumlah: 1,
+          jendela_mulai: '2099-01-01T10:30:00.000Z',
+          kedaluwarsa_pada: besok,
+        },
+      ],
+    });
+    const jendela = jendelaMenit('tulis', 'user-baru', sekarang);
+    const status = await cekDanCatat(db, jendela, 60);
+    expect(status.diizinkan).toBe(true);
+    const kunci = db.baris('rate_limits').map((b) => b.kunci);
+    expect(kunci).not.toContain('tulis:user-lama:2026-11-01T09:00');
+    expect(kunci).toContain('tulis:user-aktif:2099-01-01T10:30');
+    expect(kunci).toContain(jendela.kunci);
+  });
+
+  it('bersihkanBatasKedaluwarsa mengembalikan 0 dan tidak melempar bila D1 gagal', async () => {
+    const db = new FakeD1({});
+    // FakeD1 tanpa tabel rate_limits: SELECT mengembalikan baris kosong.
+    await expect(
+      bersihkanBatasKedaluwarsa(db, new Date('2026-11-18T10:30:00.000Z')),
+    ).resolves.toBe(0);
   });
 
   it('jendela baru memberi hitungan segar', async () => {

@@ -1,0 +1,25 @@
+# Header keamanan Cloudflare Pages untuk Dokter HP Web (R-08).
+# CSP yang sama dengan Worker API, DITAMBAH connect-src untuk origin
+# API lintas origin (tanpa ini, fetch dari Pages ke Worker diblokir
+# browser karena default-src 'self' saja).
+#
+# PENTING (Wave 5): persempit `https://*.workers.dev` ke origin API
+# persis (mis. https://dokter-hp-api.<subdomain>.workers.dev) begitu
+# subdomain Worker diketahui setelah deploy pertama. Wildcard ini
+# sengaja longgar untuk putaran ini agar aplikasi tidak rusak; risiko
+# sisa didokumentasikan di ARCHITECTURE.md §9.
+#
+# img-src tanpa lh3.googleusercontent.com: frontend TIDAK menampilkan
+# avatar Google (tidak ada referensi foto_profil/picture/avatar di src).
+#
+# script-src memuat hash SHA-256 blok JSON-LD statis (WebApplication)
+# di index.html (N-01, K-82) — satu-satunya skrip inline yang
+# diizinkan. Hash dihitung dari teks persis di dalam tag script
+# (tanpa tagnya); WAJIB dihitung ulang bila isi blok berubah.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-4o/r21fqBN20SRxsbfoWC0l3DMnxsVrv+mxXnh+rxPM='; style-src 'self'; img-src 'self' data:; connect-src 'self' https://*.workers.dev; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()

@@ -34,7 +34,7 @@
 | Lapisan | Alat | Lokasi | Yang diuji |
 |---|---|---|---|
 | Unit frontend | Vitest + jsdom | `apps/web/src/**/__tests__/` | Logika murni: format, klasifikasi kecepatan, perhitungan skor, komponen React (dengan Testing Library) |
-| Unit API | Vitest (node) | `apps/api/src/**/__tests__/` | Validasi payload (zod), hash PIN/token, klasifikasi, envelope respons |
+| Unit API | Vitest (node) | `apps/api/src/**/__tests__/` | Validasi payload (validator tulisan tangan), hash PIN/token, klasifikasi, envelope respons |
 | Integrasi API | Vitest + Miniflare (D1 lokal) | `apps/api/src/**/__tests__/` (file `*.integration.test.ts`) | Endpoint end-to-end terhadap D1 lokal: CRUD, kepemilikan data, rate limit, soft-delete, cascade hapus akun |
 | E2E | Playwright (Chromium) | `tests/e2e/` | Alur pengguna di browser: landing, pengaman rute, dashboard, WiFi, riwayat — desktop 1280x720 dan mobile 360x640 |
 | Manual | Checklist + browser/HP fisik | `tests/e2e/auth.spec.ts` (checklist), bagian 5 dokumen ini | OAuth Google, PIN di perangkat nyata, unduh PDF di HP, tes bertahan 30 detik di jaringan nyata |
@@ -56,23 +56,23 @@ fitur tersebut (dengan alasan di kolom keterangan).
 | Masuk Google — alur penuh (4.2) | — | ✓ | — | ✓ | OAuth tidak bisa diotomatisasi; integrasi menguji callback dengan token tiruan (mock) di server |
 | Sesi bertahan setelah muat ulang (4.2) | — | ✓ | — | ✓ | Integrasi: verifikasi cookie + token hash; manual: muat ulang di browser sungguhan |
 | Keluar menghapus sesi (4.2) | — | ✓ | — | ✓ | Integrasi: sesi terhapus di D1; manual: alur klik |
-| PIN: atur, buka, ubah, hapus (4.2) | ✓ | ✓ | — | ✓ | Unit: hash SHA-256 + salt; integrasi: endpoint `/auth/pin/*`; manual: layar kunci |
-| PIN: kunci 30 dtk setelah 5x salah (4.2) | ✓ | ✓ | — | ✓ | Unit: penghitung percobaan; integrasi: `pin_terkunci_sampai`; manual: waktu tunggu nyata |
+| PIN: atur, buka, ubah, hapus (4.2) | ✓ | ✓ | — | ✓ | Unit: HMAC-SHA256 + pepper + salt (K-71); integrasi: endpoint `/api/auth/pin/*`; manual: layar kunci |
+| PIN: kunci 30 dtk setelah 5x salah (4.2) | ✓ | ✓ | — | ✓ | Unit: penghitung percobaan; integrasi: `terkunci_sampai`; manual: waktu tunggu nyata |
 | PIN lupa — pemulihan lewat Google (4.2) | — | ✓ | — | ✓ | Integrasi: atur PIN baru setelah masuk ulang; manual: alur penuh |
 | Gerbang kunci: dashboard redirect ke /kunci bila PIN diatur (4.2) | — | — | ✓ | — | E2E dengan sesi tes (setelah helper sesi tersedia) |
-| Daftar sesi + keluar dari sesi lain (4.8) | — | ✓ | — | ✓ | Integrasi: endpoint `/account/sessions`; manual: dua perangkat |
+| Daftar sesi + keluar dari sesi lain (4.8) | — | ✓ | — | ✓ | Integrasi: endpoint `/api/account/sessions`; manual: dua perangkat |
 
 ### 3.2 Dashboard dan dokter
 
 | Fitur (PRODUCT.md) | U | I | E | M | Keterangan |
 |---|---|---|---|---|---|
 | Skor 0-100 + kategori (4.3) | ✓ | ✓ | ✓ | — | Unit: perhitungan + normalisasi bobot komponen tanpa data; E2E: tampil dari data real |
-| Diagnosis satu ketuk (4.3) | ✓ | ✓ | ✓ | — | Unit: perakitan ringkasan; integrasi: POST `/health-checks`; E2E: tombol menyimpan |
+| Diagnosis satu ketuk (4.3) | ✓ | ✓ | ✓ | — | Unit: perakitan ringkasan; integrasi: POST `/api/health-checks`; E2E: tombol menyimpan |
 | Grafik riwayat skor (4.3) | ✓ | — | ✓ | — | Unit: pemetaan data ke titik grafik; E2E: grafik tampil bila ada data |
 | Empty state dashboard (4.3) | — | — | ✓ | — | `smoke.spec.ts` (test.skip sampai auth + helper sesi ada) |
 | Banner "Tidak tersambung ke server" (4.3) | ✓ | — | ✓ | ✓ | E2E: API dimatikan (mock gagal); manual: mode pesawat sebentar |
 | Dokter WiFi: tes unduh 1 MB (4.4) | ✓ | — | ✓ | ✓ | Unit: klasifikasi ambang (lihat `smoke.test.ts`); E2E: tombol jalan, hasil tampil; manual: hasil nyata di HP |
-| Dokter WiFi: latensi HTTP (4.4) | ✓ | ✓ | ✓ | — | Unit: median 3 sampel; integrasi: GET `/ping`; E2E: label "latensi HTTP" |
+| Dokter WiFi: latensi HTTP (4.4) | ✓ | ✓ | ✓ | — | Unit: median 3 sampel; integrasi: GET `/api/ping`; E2E: label "latensi HTTP" |
 | Dokter WiFi: info jaringan + "tidak tersedia" (4.4) | ✓ | — | ✓ | ✓ | Unit: penanganan API tidak ada; manual: browser tanpa Network Information API |
 | Dokter WiFi: rekomendasi channel 1/6/11 (4.4) | ✓ | — | ✓ | — | Unit: logika rekomendasi dari hasil tes |
 | Dokter WiFi: tes bertahan 30 detik (4.4) | ✓ | ✓ | — | ✓ | Unit: pengumpul sampel; integrasi: POST 30 sampel + batas maks 30; manual: 30 detik penuh di jaringan nyata (terlalu lama untuk E2E rutin) |
@@ -95,10 +95,10 @@ fitur tersebut (dengan alasan di kolom keterangan).
 | Riwayat: daftar + filter + urutan (4.7) | ✓ | ✓ | ✓ | — | Integrasi: paginasi + filter jenis; E2E: daftar tampil |
 | Riwayat: soft-delete (4.7) | — | ✓ | ✓ | — | Integrasi: `deleted_at` terisi, baris tidak hilang permanen |
 | Laporan PDF client-side (4.7) | ✓ | — | — | ✓ | Unit: perakitan data PDF dari data real; manual: unduh + isi cocok dengan riwayat (di HP dan desktop) |
-| Pengaturan: profil nama (4.8) | — | ✓ | ✓ | — | Integrasi: PATCH `/account/profile` |
+| Pengaturan: profil nama (4.8) | — | ✓ | ✓ | — | Integrasi: PATCH `/api/account/profile` |
 | Pengaturan: hapus akun + cascade (4.8) | — | ✓ | — | ✓ | Integrasi: seluruh data pengguna terhapus; manual: konfirmasi "HAPUS" |
 | Kepemilikan: pengguna A tidak bisa baca data B (10) | — | ✓ | — | — | Integrasi WAJIB: tiap endpoint data diuji dengan dua pengguna |
-| Validasi input (skor 0-100, PIN 4-8 digit) (ARCH 6.2) | ✓ | ✓ | — | — | Unit: skema zod; integrasi: payload tidak valid ditolak 400 |
+| Validasi input (skor 0-100, PIN 4-8 digit) (ARCH 6.2) | ✓ | ✓ | — | — | Unit: validator tulisan tangan; integrasi: payload tidak valid ditolak 400 |
 | SQL injection ditolak (ARCH 6.2) | — | ✓ | — | — | Integrasi: input berisi karakter SQL disimpan sebagai teks biasa |
 | Rate limit tulis 60/menit (ARCH 6.1) | — | ✓ | — | — | Integrasi: banjir tulis ditolak 429 |
 | CORS hanya Pages + Vercel (ARCH 6.2) | — | ✓ | — | — | Integrasi: origin lain ditolak |
@@ -401,7 +401,7 @@ ditemukan di file tersebut.
 | ID | Area | Skenario | Langkah singkat | Hasil yang diharapkan | Prioritas | Jenis |
 |---|---|---|---|---|---|---|
 | T-14 | Retry Gemini | 429 di model primer: satu retry ke model cadangan | Mock fetch: model `gemini-3.5-flash-lite` menjawab 429, model `gemini-3.1-flash-lite` menjawab sukses | Jawaban dari model cadangan dipakai; total tepat 2 panggilan (satu per model); tidak ada retry ketiga | P0 | Unit |
-| T-15 | Retry Gemini | 429 di kedua model: fallback aturan + kode tercatat | Mock fetch: kedua model menjawab 429; kirim pertanyaan lewat endpoint | Respons 200 `sumber_jawaban: 'aturan'`; kode internal `GEMINI_KUOTA_HABIS` tercatat — perlu konfirmasi koordinator: belum ditemukan mekanisme pencatatan log server untuk kode ini di `routes.ts` | P0 | Integrasi |
+| T-15 | Retry Gemini | 429 di kedua model: fallback aturan + kode tercatat | Mock fetch: kedua model menjawab 429; kirim pertanyaan lewat endpoint | Respons 200 `sumber_jawaban: 'aturan'`; kode internal `GEMINI_KUOTA_HABIS` tercatat lewat log `console.warn` di `routes.ts` (ditangani Tim Integrasi) | P0 | Integrasi |
 | T-16 | Retry Gemini | 404 di model primer: retry ke model cadangan | Mock fetch: model primer menjawab 404, model cadangan menjawab sukses | Jawaban dari model cadangan dipakai; total tepat 2 panggilan | P1 | Unit |
 | T-17 | Retry Gemini | Galat non-429/404: tanpa retry cadangan | Mock fetch: model primer timeout, lalu 500, masing-masing satu kali | Model cadangan tidak dipanggil; alur langsung ke fallback aturan (200, `sumber_jawaban: 'aturan'`) | P1 | Unit |
 | T-18 | Kuota AI | `sisa_hari_ini` menurun per pertanyaan tersimpan | Kirim 3 pertanyaan (AI dan cache) lalu 1 pertanyaan saat Gemini mati | Setiap pertanyaan tersimpan mengurangi `sisa_hari_ini` satu per satu; pertanyaan fallback (`tersimpan: false`) tidak memotong sisa kuota | P0 | Integrasi |
@@ -422,15 +422,15 @@ ditemukan di file tersebut.
 |---|---|---|---|---|---|---|
 | T-24 | Paginasi cursor | Halaman 1 + 2 tanpa duplikat atau hilang | Buat 25 health check; ambil halaman 1 (`limit=20`) lalu halaman 2 dengan `cursor` dari respons | Gabungan kedua halaman memuat tepat 25 baris unik, urutan terbaru dulu, tanpa duplikat dan tanpa baris hilang | P0 | Integrasi |
 | T-25 | Paginasi cursor | Cursor tidak valid ditolak 400 | Panggil `GET /api/health-checks?cursor=bukan-cursor-valid` | Respons 400 `VALIDATION_ERROR`; tidak ada 500 dan tidak ada data yang dikembalikan | P0 | Integrasi |
-| T-26 | Paginasi cursor | Konsisten di health, WiFi, history, dan AI | Panggil `GET /api/health-checks`, `GET /api/wifi-reports`, `GET /api/history`, dan `GET /api/ai/diagnoses` masing-masing dua halaman | Keempat endpoint memakai cursor keyset yang sama (`limit` + `cursor` + `next_cursor`); parameter `offset` tidak lagi dipakai di endpoint mana pun — perlu konfirmasi koordinator: catatan verifikasi koordinator menyebut selisih offset vs cursor antar rute belum diselesaikan | P0 | Integrasi |
-| T-27 | Paginasi cursor | Batas `limit` diklem ke 1–100 | Panggil daftar dengan `limit=0`, `limit=500`, dan `limit=bukan-angka` | `limit=0` diklem ke 1, `limit=500` diklem ke 100, `limit` bukan angka mengembalikan 400 — perlu konfirmasi koordinator: perilaku klem ini tertulis di kontrak §0.6 untuk paginasi offset; bentuk cursor-nya belum didokumentasikan | P2 | Integrasi |
-| T-28 | Paginasi cursor | Halaman terakhir menandakan habis | Ambil halaman sampai data habis (kurang dari `limit` baris tersisa) | Halaman terakhir mengembalikan `next_cursor: null` dan penanda tidak ada lagi halaman — perlu konfirmasi koordinator: bentuk field meta cursor (`next_cursor`, `has_more`, `total`) belum didokumentasikan di kontrak §0.6 yang masih memakai bentuk offset | P1 | Integrasi |
+| T-26 | Paginasi cursor | Konsisten di health, WiFi, history, dan AI | Panggil `GET /api/health-checks`, `GET /api/wifi-reports`, `GET /api/history`, dan `GET /api/ai/diagnoses` masing-masing dua halaman | Keempat endpoint memakai cursor keyset yang sama (`limit` + `cursor` + `next_cursor`); parameter `offset` tidak lagi dipakai di endpoint mana pun (terverifikasi Wave 4: semua rute daftar memakai cursor, K-32) | P0 | Integrasi |
+| T-27 | Paginasi cursor | Batas `limit` diklem ke 1–100 | Panggil daftar dengan `limit=0`, `limit=500`, dan `limit=bukan-angka` | `limit=0` diklem ke 1, `limit=500` diklem ke 100, `limit` bukan angka mengembalikan 400 (kontrak §0.6 kini mendokumentasikan klem ini untuk cursor) | P2 | Integrasi |
+| T-28 | Paginasi cursor | Halaman terakhir menandakan habis | Ambil halaman sampai data habis (kurang dari `limit` baris tersisa) | Halaman terakhir mengembalikan `next_cursor: null` dan `has_more: false` (kontrak §0.6 kini mendokumentasikan meta cursor `{limit, next_cursor, has_more}`; `total` dipensiunkan) | P1 | Integrasi |
 
 ### 11.6 Auth lintas-situs (K-49, K-50, kontrak §1.2)
 
 | ID | Area | Skenario | Langkah singkat | Hasil yang diharapkan | Prioritas | Jenis |
 |---|---|---|---|---|---|---|
-| T-29 | Auth lintas-situs | Cookie sesi memakai `SameSite=None; Secure` | Periksa header `Set-Cookie` sesi pada respons callback Google | Cookie `dokter_hp_session` membawa atribut `HttpOnly; Secure; SameSite=None; Path=/` (bukan `Lax`, agar terkirim pada fetch lintas-situs) | P0 | Integrasi |
+| T-29 | Auth lintas-situs | Cookie sesi memakai `SameSite=None; Secure` | Periksa header `Set-Cookie` sesi pada respons callback Google | Cookie `__Host-dokter_hp_session` membawa atribut `HttpOnly; Secure; SameSite=None; Path=/` (bukan `Lax`, agar terkirim pada fetch lintas-situs) | P0 | Integrasi |
 | T-30 | Auth lintas-situs | Cookie sesi terkirim pada fetch lintas-situs | Dari origin frontend (Pages), panggil `GET /api/auth/me` dengan `credentials: 'include'` setelah masuk | Permintaan membawa cookie sesi dan mengembalikan 200 dengan data pengguna (bukan 401) | P0 | E2E |
 | T-31 | Auth lintas-situs | Origin salah pada endpoint mutasi ditolak 403 | Kirim `POST /api/health-checks` dengan header `Origin` dari domain yang bukan `ALLOWED_ORIGIN` | Respons 403; data tidak tersimpan | P0 | Integrasi |
 | T-32 | Auth lintas-situs | Tanpa header Origin (klien non-browser) diizinkan | Kirim `POST /api/health-checks` tanpa header `Origin` (seperti curl atau klien non-browser) dengan sesi valid | Permintaan dilayani normal (200); tidak ada penolakan karena Origin tidak ada | P0 | Integrasi |
@@ -461,31 +461,49 @@ ditemukan di file tersebut.
 Dikumpulkan dari baris-baris di atas. Tidak ada endpoint atau kode
 yang dikarang untuk menutup celah ini.
 
-1. **Kode galat rate limit ekspor (T-19):** K-42 menetapkan 429
-   `RATE_LIMIT_EXCEEDED`, tetapi kontrak §6.6 masih menulis 429
-   `RATE_LIMITED`. Mana yang kanonis?
+1. **Kode galat rate limit ekspor (T-19) — DITUTUP (K-59,
+   K-61):** kanonis 429 `RATE_LIMITED`; `RATE_LIMIT_EXCEEDED`
+   (K-42) dibatalkan. Baris T-19 sudah diperbaiki Tim Integrasi.
 2. **Pencatatan kode `GEMINI_KUOTA_HABIS` (T-15):** kode internal
    ini ada di `GalatGemini`, tetapi belum ditemukan mekanisme
    pencatatan log server untuknya di `routes.ts`. Apakah kode
    cukup dilacak di lapisan Gemini, atau perlu log server eksplisit?
+   **Ditangani Tim Integrasi** (terverifikasi Wave 4): log
+   `console.warn` untuk `GEMINI_KUOTA_HABIS` ada di
+   `apps/api/src/ai/routes.ts` (tanpa data pengguna).
 3. **Penyelarasan cursor per rute (T-26):** catatan verifikasi
    koordinator menyebut selisih offset vs cursor antar rute belum
    diselesaikan. Konfirmasi bahwa semua endpoint daftar sudah
    memakai cursor sebelum T-26 dijalankan.
+   **Ditangani Tim Integrasi** (terverifikasi Wave 4): kelima
+   berkas rute daftar (`health.ts`, `wifi.ts`, `history.ts`,
+   `account.ts`, `ai/routes.ts`) memakai helper cursor
+   (`cursorClause`/`parseCursorParam`); helper offset sudah tidak
+   ada (K-32).
 4. **Bentuk meta paginasi cursor (T-27, T-28):** kontrak §0.6
    masih memakai bentuk offset (`total`, `has_more`, klem `limit`
    1–100). Bentuk field meta cursor (`next_cursor`, `has_more`,
    `total`) dan perilaku klem `limit` pada cursor belum
    didokumentasikan.
+   **Ditangani Tim Integrasi** (terverifikasi Wave 4): kontrak
+   §0.6 kini mendokumentasikan meta cursor `{limit, next_cursor,
+   has_more}` dan klem `limit` 1–100; `offset` dan `total` sudah
+   dipensiunkan.
 5. **Penghapusan cookie OAuth (T-33):** kontrak §1.2 hanya
    menampilkan penghapusan cookie `state` + `verifier` pada jalur
    sukses. Konfirmasi cookie `redirect` dan perilaku penghapusan
    pada jalur galat.
-6. **Keputusan K-56 s.d. K-58:** log keputusan yang dibaca
-   berakhir di K-55. Bila K-56 s.d. K-58 sudah ada, sampaikan
-   isinya agar matriks dapat ditambah bila relevan.
-7. **Kontrak §5 belum diperbarui:** §5 masih menulis 502
-   `AI_TIDAK_TERSEDIA`, batas pertanyaan 2000 karakter, paginasi
-   offset, dan path tanpa awalan `/api` — semuanya sudah dibatalkan
-   K-23, K-36, K-37, K-32, dan K-07. Kasus di bagian ini mengikuti
-   keputusan; kontrak menunggu pembaruan tim integrasi.
+   **Ditangani Tim Integrasi** (terverifikasi Wave 4): kontrak
+   §1.2 kini menyatakan ketiga cookie OAuth (`state`, `verifier`,
+   `redirect`) dihapus di SEMUA jalur keluar callback — sukses
+   maupun galat.
+6. **Keputusan K-56 s.d. K-58 — DITUTUP (K-64):** K-56–K-58 ADA di
+   log keputusan (log kini sampai K-65); laporan "berakhir di K-55"
+   hanya masalah waktu baca — tim membaca log sebelum koordinator
+   menambahkannya.
+7. **Kontrak §5 belum diperbarui — DITUTUP (K-64):** kontrak §5
+   SUDAH ditulis ulang Tim Integrasi di Wave 3b: tanpa 502
+   `AI_TIDAK_TERSEDIA` (pensiun, K-23), batas pertanyaan 1000
+   karakter (K-36), paginasi cursor (K-32, K-38), dan awalan
+   `/api` (K-07) — terverifikasi Wave 4b dari
+   `docs/api-contracts.md` §5.

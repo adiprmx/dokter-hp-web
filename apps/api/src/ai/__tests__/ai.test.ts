@@ -22,9 +22,11 @@ import {
   susunJawabanAturan,
 } from '../fallback';
 import {
+  BATAS_BERSIH_CACHE_AI,
   CACHE_AI_TTL_HARI,
   VERSI_KONTEKS_CACHE,
   bacaCache,
+  bersihkanCacheKedaluwarsa,
   hitungKunciCache,
   normalisasiPertanyaanCache,
   sidikJariKonteks,
@@ -33,8 +35,11 @@ import {
 import { SYSTEM_PROMPT, buildUserMessage } from '../prompt';
 import {
   BATAS_AI_HARIAN,
+  cadangkanKuotaAi,
   cekBatasAi,
   hitungPertanyaanHariIni,
+  jendelaKuotaAi,
+  lepaskanKuotaAi,
 } from '../ratelimit';
 import type { DbD1, PernyataanD1 } from '../ratelimit';
 import {
@@ -46,6 +51,7 @@ import {
 } from '../routes';
 import type { AiBindings, AiVariables } from '../routes';
 import { encodeCursor } from '../../lib/db';
+import { FakeD1 } from '../../test/fake-d1';
 
 // ---------------------------------------------------------------------
 // Mock D1
@@ -66,22 +72,33 @@ interface BarisCacheAi {
   dibuat_pada: string;
 }
 
+interface BarisBatas {
+  kunci: string;
+  jumlah: number;
+  jendela_mulai: string;
+  kedaluwarsa_pada: string;
+}
+
 /**
  * Mock D1 minimal: mendukung SELECT COUNT ai_diagnoses (hitung
  * harian), SELECT daftar riwayat (cursor keyset), SELECT ai_cache
  * (baca cache), SELECT health_checks (kepemilikan + konteks),
- * SELECT wifi_reports (konteks), INSERT ai_diagnoses, dan INSERT
- * OR REPLACE ai_cache (tulis cache). Perilaku dipilih dari teks SQL.
+ * SELECT wifi_reports (konteks), INSERT ai_diagnoses, INSERT
+ * OR REPLACE ai_cache (tulis cache), dan tabel rate_limits
+ * (INSERT OR IGNORE + UPDATE bersyarat + SELECT jumlah, dengan
+ * meta.changes — dipakai cekDanCatat dan kuota AI).
  */
 function buatMockDb(awal: {
   diagnosis?: BarisDiagnosis[];
   pemeriksaan?: { id: string; user_id: string; skor: number; ringkasan: string; dibuat_pada: string }[];
   wifi?: { kecepatan_unduh_kbps: number; ping_ms: number; kekuatan_sinyal: string }[];
   cache?: BarisCacheAi[];
+  rateLimits?: { kunci: string; jumlah: number }[];
   gagal?: string[];
 } = {}): DbD1 & {
   diagnosis: BarisDiagnosis[];
   cacheAi: Map<string, { jawaban: string; dibuat_pada: string }>;
+  batasLaju: Map<string, BarisBatas>;
   sqlTerakhir: string[];
 } {
   const diagnosis: BarisDiagnosis[] = [...(awal.diagnosis ?? [])];
@@ -94,12 +111,22 @@ function buatMockDb(awal: {
       dibuat_pada: entri.dibuat_pada,
     });
   }
+  const batasLaju = new Map<string, BarisBatas>();
+  for (const entri of awal.rateLimits ?? []) {
+    batasLaju.set(entri.kunci, {
+      kunci: entri.kunci,
+      jumlah: entri.jumlah,
+      jendela_mulai: '',
+      kedaluwarsa_pada: '2999-01-01T00:00:00.000Z',
+    });
+  }
   const gagal = new Set(awal.gagal ?? []);
   const sqlTerakhir: string[] = [];
 
   const db = {
     diagnosis,
     cacheAi,
+    batasLaju,
     sqlTerakhir,
     prepare(sql: string): PernyataanD1 {
       sqlTerakhir.push(sql);
@@ -149,10 +176,22 @@ function buatMockDb(awal: {
             const entri = cacheAi.get(nilaiBind[0] as string);
             return ((entri ?? null) as unknown) as T | null;
           }
+          if (sql.includes('FROM rate_limits') && sql.includes('WHERE kunci')) {
+            const entri = batasLaju.get(nilaiBind[0] as string);
+            return ((entri ?? null) as unknown) as T | null;
+          }
           return null;
         },
         async all<T>(): Promise<{ results: T[]; success: boolean }> {
           if (gagal.has('all')) throw new Error('D1 gagal (mock)');
+          if (sql.includes('FROM rate_limits')) {
+            const batas = (nilaiBind[1] as number) ?? 100;
+            const hasil = [...batasLaju.values()]
+              .filter((b) => b.kedaluwarsa_pada < (nilaiBind[0] as string))
+              .slice(0, batas)
+              .map((b) => ({ kunci: b.kunci }));
+            return { results: hasil as T[], success: true };
+          }
           if (sql.includes('FROM ai_diagnoses')) {
             const idPengguna = nilaiBind[0] as string;
             // Bind: [userId, (dibuat, dibuat, id)?, limit+1].
@@ -182,8 +221,45 @@ function buatMockDb(awal: {
           }
           return { results: [], success: true };
         },
-        async run(): Promise<{ success: boolean }> {
+        async run(): Promise<{ success: boolean; meta?: { changes: number } }> {
           if (gagal.has('run')) throw new Error('D1 gagal (mock)');
+          if (sql.includes('INSERT OR IGNORE INTO rate_limits')) {
+            const [kunci, jendela_mulai, kedaluwarsa_pada] = nilaiBind as [
+              string,
+              string,
+              string,
+            ];
+            if (batasLaju.has(kunci)) {
+              return { success: true, meta: { changes: 0 } };
+            }
+            batasLaju.set(kunci, { kunci, jumlah: 0, jendela_mulai, kedaluwarsa_pada });
+            return { success: true, meta: { changes: 1 } };
+          }
+          if (sql.includes('UPDATE rate_limits SET jumlah = jumlah + 1')) {
+            const [kunci, batas] = nilaiBind as [string, number];
+            const baris = batasLaju.get(kunci);
+            if (baris && baris.jumlah < batas) {
+              baris.jumlah += 1;
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
+          if (sql.includes('UPDATE rate_limits SET jumlah = jumlah - 1')) {
+            const [kunci] = nilaiBind as [string];
+            const baris = batasLaju.get(kunci);
+            if (baris && baris.jumlah > 0) {
+              baris.jumlah -= 1;
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
+          if (sql.includes('DELETE FROM rate_limits WHERE kunci IN')) {
+            let terhapus = 0;
+            for (const kunci of nilaiBind as string[]) {
+              if (batasLaju.delete(kunci)) terhapus += 1;
+            }
+            return { success: true, meta: { changes: terhapus } };
+          }
           if (sql.includes('INSERT OR REPLACE INTO ai_cache')) {
             cacheAi.set(nilaiBind[1] as string, {
               jawaban: nilaiBind[2] as string,
@@ -296,9 +372,7 @@ describe('rate limit AI (20/hari per pengguna)', () => {
   it('diizinkan bila terpakai di bawah 20, dengan sisa yang benar', async () => {
     const sekarang = new Date('2026-11-17T10:00:00.000Z');
     const db = buatMockDb({
-      diagnosis: Array.from({ length: 19 }, (_, i) =>
-        barisDiagnosis('user-1', `2026-11-17T0${i % 10}:00:00.000Z`, `d${i}`),
-      ),
+      rateLimits: [{ kunci: 'ai:user-1:2026-11-17', jumlah: 19 }],
     });
     const status = await cekBatasAi(db, 'user-1', sekarang);
     expect(status).toEqual({
@@ -312,9 +386,7 @@ describe('rate limit AI (20/hari per pengguna)', () => {
   it('ditolak bila terpakai sudah 20', async () => {
     const sekarang = new Date('2026-11-17T10:00:00.000Z');
     const db = buatMockDb({
-      diagnosis: Array.from({ length: 20 }, (_, i) =>
-        barisDiagnosis('user-1', '2026-11-17T08:00:00.000Z', `d${i}`),
-      ),
+      rateLimits: [{ kunci: 'ai:user-1:2026-11-17', jumlah: 20 }],
     });
     const status = await cekBatasAi(db, 'user-1', sekarang);
     expect(status.diizinkan).toBe(false);
@@ -324,13 +396,76 @@ describe('rate limit AI (20/hari per pengguna)', () => {
   it('sisa tidak pernah negatif bila terpakai melebihi batas', async () => {
     const sekarang = new Date('2026-11-17T10:00:00.000Z');
     const db = buatMockDb({
-      diagnosis: Array.from({ length: 25 }, (_, i) =>
-        barisDiagnosis('user-1', '2026-11-17T08:00:00.000Z', `d${i}`),
-      ),
+      rateLimits: [{ kunci: 'ai:user-1:2026-11-17', jumlah: 25 }],
     });
     const status = await cekBatasAi(db, 'user-1', sekarang);
     expect(status.diizinkan).toBe(false);
     expect(status.sisa).toBe(0);
+  });
+
+  it('cekBatasAi tidak mengubah penghitung (baca saja)', async () => {
+    const sekarang = new Date('2026-11-17T10:00:00.000Z');
+    const db = buatMockDb({
+      rateLimits: [{ kunci: 'ai:user-1:2026-11-17', jumlah: 5 }],
+    });
+    await cekBatasAi(db, 'user-1', sekarang);
+    await cekBatasAi(db, 'user-1', sekarang);
+    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(5);
+  });
+});
+
+describe('cadangan kuota AI (reserve-then-confirm, R-05)', () => {
+  const SEKARANG = new Date('2026-11-17T10:00:00.000Z');
+
+  it('cadangan menaikkan penghitung dan mengembalikan status sesudah cadangan', async () => {
+    const db = buatMockDb({});
+    const { status, jendela } = await cadangkanKuotaAi(db, 'user-1', SEKARANG);
+    expect(status).toEqual({ diizinkan: true, terpakai: 1, batas: 20, sisa: 19 });
+    expect(jendela.kunci).toBe('ai:user-1:2026-11-17');
+    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(1);
+  });
+
+  it('cadangan ke-21 ditolak dan TIDAK menaikkan penghitung', async () => {
+    const db = buatMockDb({
+      rateLimits: [{ kunci: 'ai:user-1:2026-11-17', jumlah: 20 }],
+    });
+    const { status } = await cadangkanKuotaAi(db, 'user-1', SEKARANG);
+    expect(status.diizinkan).toBe(false);
+    expect(status.terpakai).toBe(20);
+    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(20);
+  });
+
+  it('pelepasan cadangan mengembalikan satu kuota, tidak di bawah 0', async () => {
+    const db = buatMockDb({
+      rateLimits: [{ kunci: 'ai:user-1:2026-11-17', jumlah: 1 }],
+    });
+    const jendela = jendelaKuotaAi('user-1', SEKARANG);
+    await lepaskanKuotaAi(db, jendela);
+    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(0);
+    await lepaskanKuotaAi(db, jendela);
+    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(0);
+  });
+
+  it('burst 20 paralel dari 19 terpakai: tepat 1 diizinkan (regresi TOCTOU R-05)', async () => {
+    const db = buatMockDb({
+      rateLimits: [{ kunci: 'ai:user-1:2026-11-17', jumlah: 19 }],
+    });
+    const hasil = await Promise.all(
+      Array.from({ length: 20 }, () => cadangkanKuotaAi(db, 'user-1', SEKARANG)),
+    );
+    const diizinkan = hasil.filter((h) => h.status.diizinkan);
+    expect(diizinkan).toHaveLength(1);
+    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(20);
+  });
+
+  it('burst 25 paralel dari 0: tepat 20 diizinkan', async () => {
+    const db = buatMockDb({});
+    const hasil = await Promise.all(
+      Array.from({ length: 25 }, () => cadangkanKuotaAi(db, 'user-1', SEKARANG)),
+    );
+    const diizinkan = hasil.filter((h) => h.status.diizinkan);
+    expect(diizinkan).toHaveLength(20);
+    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(20);
   });
 });
 
@@ -554,6 +689,25 @@ describe('tanyaGemini (Flash-Lite)', () => {
     expect(config).not.toHaveProperty('temperature');
     expect(config).not.toHaveProperty('top_p');
     expect(config).not.toHaveProperty('top_k');
+  });
+
+  it('mengirim kunci API lewat header x-goog-api-key, bukan query string (R-19)', async () => {
+    const fetchMock = buatFetchMock(responsGemini('Baik.'));
+    await tanyaGemini({
+      kunciApi: 'kunci-rahasia-uji',
+      promptSistem: SYSTEM_PROMPT,
+      pesanPengguna: 'Tes',
+      fetchFn: fetchMock as unknown as typeof fetch,
+    });
+    const url = urlPanggilan(fetchMock);
+    expect(url).not.toContain('key=');
+    expect(url).not.toContain('kunci-rahasia-uji');
+    expect(url).not.toContain('?');
+    const calls = (fetchMock as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls;
+    const init = calls[0]?.[1] as { headers?: Record<string, string> };
+    expect(init.headers?.['x-goog-api-key']).toBe('kunci-rahasia-uji');
+    expect(init.headers?.['Content-Type']).toBe('application/json');
   });
 
   it('melempar GEMINI_TIDAK_TERSEDIA pada status HTTP 500 tanpa mencoba cadangan', async () => {
@@ -970,6 +1124,93 @@ describe('cache jawaban AI (ai_cache, SHA-256, TTL 7 hari)', () => {
   });
 });
 
+describe('bersihkanCacheKedaluwarsa (R-15)', () => {
+  const SEKARANG = new Date('2026-11-17T10:00:00.000Z');
+
+  it('menghapus entri lebih tua dari 7 hari dan mempertahankan entri segar', async () => {
+    const db = new FakeD1({
+      ai_cache: [
+        {
+          id: 'id-1',
+          pertanyaan_hash: 'hash-8-hari',
+          jawaban: 'Jawaban lama.',
+          dibuat_pada: '2026-11-09T09:59:59.000Z',
+        },
+        {
+          id: 'id-2',
+          pertanyaan_hash: 'hash-tepat-7-hari',
+          jawaban: 'Jawaban di batas.',
+          dibuat_pada: '2026-11-10T10:00:00.000Z',
+        },
+        {
+          id: 'id-3',
+          pertanyaan_hash: 'hash-baru',
+          jawaban: 'Jawaban baru.',
+          dibuat_pada: '2026-11-16T10:00:00.000Z',
+        },
+      ],
+    });
+    expect(await bersihkanCacheKedaluwarsa(db, SEKARANG)).toBe(1);
+    expect(db.baris('ai_cache').map((b) => b.pertanyaan_hash).sort()).toEqual([
+      'hash-baru',
+      'hash-tepat-7-hari',
+    ]);
+  });
+
+  it('mengembalikan 0 dan tidak menghapus bila tidak ada entri kedaluwarsa', async () => {
+    const db = new FakeD1({
+      ai_cache: [
+        {
+          id: 'id-1',
+          pertanyaan_hash: 'hash-baru',
+          jawaban: 'Jawaban baru.',
+          dibuat_pada: '2026-11-16T10:00:00.000Z',
+        },
+      ],
+    });
+    expect(await bersihkanCacheKedaluwarsa(db, SEKARANG)).toBe(0);
+    expect(db.baris('ai_cache')).toHaveLength(1);
+  });
+
+  it('menyapu maksimal 100 baris per pemicu', async () => {
+    expect(BATAS_BERSIH_CACHE_AI).toBe(100);
+    const lama = Array.from({ length: 105 }, (_, i) => ({
+      id: `id-${i}`,
+      pertanyaan_hash: `hash-lama-${String(i).padStart(3, '0')}`,
+      jawaban: 'Jawaban lama.',
+      dibuat_pada: '2026-11-01T10:00:00.000Z',
+    }));
+    const db = new FakeD1({ ai_cache: lama });
+    expect(await bersihkanCacheKedaluwarsa(db, SEKARANG)).toBe(100);
+    expect(db.baris('ai_cache')).toHaveLength(5);
+  });
+
+  it('best-effort: mengembalikan 0 bila D1 gagal', async () => {
+    const db: DbD1 = {
+      prepare(): PernyataanD1 {
+        throw new Error('D1 gagal (simulasi)');
+      },
+    };
+    await expect(bersihkanCacheKedaluwarsa(db, SEKARANG)).resolves.toBe(0);
+  });
+
+  it('tulisCache memicu sapuan: entri kedaluwarsa lama ikut terhapus', async () => {
+    const db = new FakeD1({
+      ai_cache: [
+        {
+          id: 'id-lama',
+          pertanyaan_hash: 'hash-lama',
+          jawaban: 'Jawaban lama.',
+          dibuat_pada: '2026-11-01T10:00:00.000Z',
+        },
+      ],
+    });
+    const kunciBaru = await hitungKunciCache('user-1', 'WiFi lemot');
+    expect(await tulisCache(db, kunciBaru, 'Jawaban baru.', SEKARANG)).toBe(true);
+    expect(db.baris('ai_cache').map((b) => b.pertanyaan_hash)).toEqual([kunciBaru]);
+  });
+});
+
 // ---------------------------------------------------------------------
 // Rute Hono (mock D1 + mock fetch global)
 // ---------------------------------------------------------------------
@@ -1096,9 +1337,7 @@ describe('rute AI (Hono)', () => {
   it('POST /api/ai/tanya: 429 AI_QUOTA_HABIS + header Retry-After bila kuota harian habis, tanpa memanggil Gemini', async () => {
     const hariIni = new Date().toISOString().slice(0, 10);
     const db = buatMockDb({
-      diagnosis: Array.from({ length: 20 }, (_, i) =>
-        barisDiagnosis('user-1', `${hariIni}T08:00:00.000Z`, `d${i}`),
-      ),
+      rateLimits: [{ kunci: `ai:user-1:${hariIni}`, jumlah: 20 }],
     });
     const fetchMock = buatFetchMock(responsGemini('x'));
     vi.stubGlobal('fetch', fetchMock);
@@ -1113,6 +1352,56 @@ describe('rute AI (Hono)', () => {
     expect(retryAfter).toBeGreaterThanOrEqual(1);
     expect(retryAfter).toBeLessThanOrEqual(86_400);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('POST /api/ai/tanya: burst 20 paralel dari 19 terpakai — tepat 1 sukses, 19 ditolak 429 (R-05)', async () => {
+    const hariIni = new Date().toISOString().slice(0, 10);
+    const db = buatMockDb({
+      rateLimits: [{ kunci: `ai:user-1:${hariIni}`, jumlah: 19 }],
+    });
+    // Mock Gemini dengan jeda 50 ms agar 20 permintaan tumpang tindih.
+    const fetchMock = vi.fn(async () => {
+      await new Promise((selesai) => setTimeout(selesai, 50));
+      return new Response(JSON.stringify(responsGemini('Jawaban AI.')), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const app = buatApp(db, 'user-1');
+    const hasil = await Promise.all(
+      Array.from({ length: 20 }, (_, i) =>
+        tanya(app, `Pertanyaan berbeda nomor ${i}?`),
+      ),
+    );
+    const sukses = hasil.filter((r) => r.status === 200);
+    const ditolak = hasil.filter((r) => r.status === 429);
+    expect(sukses).toHaveLength(1);
+    expect(ditolak).toHaveLength(19);
+    for (const r of ditolak) {
+      const badan = (await r.json()) as Record<string, unknown>;
+      expect((badan.error as Record<string, unknown>).code).toBe('AI_QUOTA_HABIS');
+    }
+    // Hanya satu diagnosis baru yang tersimpan (total kuota tetap 20).
+    expect(db.diagnosis.length).toBe(1);
+    expect(db.batasLaju.get(`ai:user-1:${hariIni}`)?.jumlah).toBe(20);
+  });
+
+  it('POST /api/ai/tanya: Gemini gagal melepaskan cadangan — kuota kembali penuh', async () => {
+    const hariIni = new Date().toISOString().slice(0, 10);
+    const db = buatMockDb({
+      rateLimits: [{ kunci: `ai:user-1:${hariIni}`, jumlah: 19 }],
+    });
+    vi.stubGlobal('fetch', buatFetchMock({ error: 'rusak' }, 500));
+    const app = buatApp(db, 'user-1');
+    const respons = await tanya(app, 'WiFi lemot kenapa?');
+    expect(respons.status).toBe(200);
+    const badan = (await respons.json()) as Record<string, unknown>;
+    const data = badan.data as Record<string, unknown>;
+    expect(data.sumber_jawaban).toBe('aturan');
+    expect(data.sisa_hari_ini).toBe(1);
+    // Cadangan dilepas: penghitung kembali 19, bukan 20.
+    expect(db.batasLaju.get(`ai:user-1:${hariIni}`)?.jumlah).toBe(19);
   });
 
   it('POST /api/ai/tanya: Gemini gagal -> jawaban fallback 200 (bukan 502), tidak disimpan, kuota tidak terpotong', async () => {

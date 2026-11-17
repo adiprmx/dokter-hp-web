@@ -115,15 +115,22 @@ export function responsGalat(
   kode: string,
   pesan: string,
   rincian?: Record<string, unknown>,
+  header?: Record<string, string>,
 ): Response {
   const galat: Record<string, unknown> = { code: kode, message: pesan };
   if (rincian !== undefined) {
     galat.details = rincian;
   }
-  return c.json(
+  const respons = c.json(
     { success: false, error: galat, meta: { timestamp: new Date().toISOString() } },
     status,
   );
+  if (header) {
+    for (const [nama, nilai] of Object.entries(header)) {
+      respons.headers.set(nama, nilai);
+    }
+  }
+  return respons;
 }
 
 /**

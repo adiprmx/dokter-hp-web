@@ -20,9 +20,10 @@
 //
 // TTL 7 hari: entri lebih tua dari itu dianggap kedaluwarsa dan
 // tidak dipakai (ditulis ulang saat pertanyaan yang sama masuk).
-// Entri kedaluwarsa tidak dihapus aktif — tabel kecil (satu baris
-// per kombinasi pertanyaan + konteks) dan INSERT OR REPLACE
-// menimpa baris lama dengan kunci yang sama.
+// Entri kedaluwarsa disapu secara malas (best-effort, maks 100 per
+// pemicu) setiap kali entri baru ditulis — lihat
+// bersihkanCacheKedaluwarsa (R-15). INSERT OR REPLACE menimpa
+// baris lama dengan kunci yang sama.
 //
 // Semua fungsi di sini best-effort: kegagalan baca/tulis D1 tidak
 // pernah melempar — baca mengembalikan null (alur lanjut ke Gemini)
@@ -155,7 +156,9 @@ export async function bacaCache(
  * Menyimpan jawaban ke ai_cache (INSERT OR REPLACE — pertanyaan
  * yang sama menimpa entri lama, termasuk yang kedaluwarsa).
  * Mengembalikan true bila tersimpan, false bila jawaban kosong
- * atau D1 gagal ditulis. Tidak pernah melempar.
+ * atau D1 gagal ditulis. Tidak pernah melempar. Entri baru yang
+ * ditulis sekaligus menjadi pemicu pembersihan malas entri
+ * kedaluwarsa (R-15, lihat bersihkanCacheKedaluwarsa).
  */
 export async function tulisCache(
   db: DbD1,
@@ -180,8 +183,52 @@ export async function tulisCache(
         sekarang.toISOString(),
       )
       .run();
+    // Pembersihan malas (R-15): best-effort, tidak pernah melempar.
+    await bersihkanCacheKedaluwarsa(db, sekarang);
     return true;
   } catch {
     return false;
+  }
+}
+
+/** Jumlah maksimal entri cache kedaluwarsa yang dibersihkan per pemicu. */
+export const BATAS_BERSIH_CACHE_AI = 100;
+
+/**
+ * Menghapus entri ai_cache yang sudah kedaluwarsa (R-15): dibuat
+ * lebih dari CACHE_AI_TTL_HARI yang lalu. Pembersihan malas
+ * best-effort mengikuti pola bersihkanBatasKedaluwarsa di
+ * lib/ratelimit: maksimal BATAS_BERSIH_CACHE_AI baris per pemicu,
+ * kegagalan apa pun ditelan dan mengembalikan 0 — pembersihan
+ * tidak pernah menggagalkan diagnosis. Mengembalikan jumlah baris
+ * yang dihapus.
+ */
+export async function bersihkanCacheKedaluwarsa(
+  db: DbD1,
+  sekarang: Date = new Date(),
+): Promise<number> {
+  try {
+    const batas = new Date(sekarang.getTime() - CACHE_AI_TTL_MS).toISOString();
+    const kedaluwarsa = await db
+      .prepare(
+        'SELECT pertanyaan_hash FROM ai_cache WHERE dibuat_pada < ? LIMIT ?',
+      )
+      .bind(batas, BATAS_BERSIH_CACHE_AI)
+      .all<{ pertanyaan_hash: string }>();
+    const daftar = (kedaluwarsa.results ?? [])
+      .map((baris) => baris.pertanyaan_hash)
+      .filter((kunci): kunci is string => typeof kunci === 'string');
+    if (daftar.length === 0) {
+      return 0;
+    }
+    const placeholder = daftar.map(() => '?').join(', ');
+    const hasil = await db
+      .prepare(`DELETE FROM ai_cache WHERE pertanyaan_hash IN (${placeholder})`)
+      .bind(...daftar)
+      .run();
+    const meta = hasil.meta as { changes?: number } | undefined;
+    return meta?.changes ?? daftar.length;
+  } catch {
+    return 0;
   }
 }

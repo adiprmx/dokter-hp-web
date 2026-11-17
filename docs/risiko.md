@@ -62,7 +62,7 @@ Matriks lengkap ada di bagian 3.
   cara membeli kuota tambahan di hari yang sama.
 - **Mitigasi yang sudah dirancang:**
   - Semua query berindeks dan ber-`LIMIT`; daftar memakai paginasi.
-  - Endpoint `/ping` dan `/health` tidak menyentuh D1.
+  - Endpoint `/api/ping` dan `/api/health` tidak menyentuh D1.
   - Rate limit tulis 60/menit per pengguna.
   - Sesi disimpan di D1, bukan di KV, agar tulis sesi tidak
     menghabiskan kuota KV yang jauh lebih kecil.
@@ -94,7 +94,7 @@ Matriks lengkap ada di bagian 3.
   simpan hasil, dan Diagnosis AI tidak bisa dipakai. Kedua mirror
   frontend tetap tampil, tetapi hanya tes WiFi lokal yang jalan.
 - **Mitigasi yang sudah dirancang:**
-  - Endpoint `/health` dan `/ping` ringan dan tanpa akses D1.
+  - Endpoint `/api/health` dan `/api/ping` ringan dan tanpa akses D1.
   - Tes WiFi tanpa akun tidak memanggil API sama sekali.
   - Rate limit per pengguna dan per IP di Worker.
   - Frontend tidak memanggil API berulang tanpa perlu (cache UI
@@ -347,7 +347,7 @@ Matriks lengkap ada di bagian 3.
     pengguna A tidak bisa membaca data pengguna B.
   - Prepared statement dengan parameter terikat (mencegah
     SQL injection yang bisa dipakai membobol filter).
-  - Validasi payload dengan zod di Worker.
+  - Validasi payload dengan validator tulisan tangan di Worker.
 - **Rencana darurat bila terjadi:**
   1. Segera nonaktifkan endpoint yang bermasalah (kembalikan
      galat 503) sampai diperbaiki — jangan menunggu rilis
@@ -363,7 +363,7 @@ Matriks lengkap ada di bagian 3.
 ### R11 — Serangan brute force PIN
 
 - **Deskripsi:** Penyerang mencoba menebak PIN 4-8 digit pengguna
-  dengan mengirim banyak percobaan ke `POST /auth/pin/verify`.
+  dengan mengirim banyak percobaan ke `POST /api/auth/pin/verify`.
   PIN 4 digit hanya punya 10.000 kemungkinan; tanpa pembatasan,
   tebakan bisa berhasil dalam waktu singkat.
 - **Kemungkinan: Sedang.** Endpoint PIN bersifat publik bagi siapa
@@ -375,11 +375,12 @@ Matriks lengkap ada di bagian 3.
   pengaturan akun, termasuk penghapusan akun.
 - **Mitigasi yang sudah dirancang:**
   - Setelah 5 kali PIN salah berturut-turut, masukan dikunci
-    30 detik (kolom `pin_terkunci_sampai`); percobaan selama
-    terkunci ditolak tanpa memeriksa PIN.
-  - PIN disimpan sebagai hash SHA-256 + salt, bukan plaintext.
-  - Penghitung kegagalan (`pin_gagal_berturut`) disimpan di server,
-    bukan di client.
+    30 detik (kolom `terkunci_sampai` di tabel `pin_attempts`);
+    percobaan selama terkunci ditolak tanpa memeriksa PIN.
+  - PIN disimpan sebagai HMAC-SHA256 dengan pepper secret
+    `PIN_PEPPER` + salt (K-71), bukan plaintext.
+  - Penghitung kegagalan (`gagal_berturut` di tabel
+    `pin_attempts`) disimpan di server, bukan di client.
 - **Rencana darurat bila terjadi:**
   1. Periksa log percobaan PIN gagal; identifikasi pola (satu akun
      diserang berulang, atau banyak akun sekaligus).
@@ -553,8 +554,8 @@ Matriks lengkap ada di bagian 3.
   bot yang merayapi endpoint) — sehingga kuota Workers/D1
   habis, layanan melambat, atau kuota Gemini terkuras lewat
   endpoint AI.
-- **Kemungkinan: Sedang.** Endpoint publik (`/health`, `/ping`,
-  `/auth/google`) bisa dipanggil siapa saja; endpoint AI
+- **Kemungkinan: Sedang.** Endpoint publik (`/api/health`, `/api/ping`,
+  `/api/auth/google`) bisa dipanggil siapa saja; endpoint AI
   membutuhkan sesi, tetapi sesi bisa dibuat siapa pun dengan
   akun Google apa pun.
 - **Dampak: Tinggi.** Banjir bisa menghabiskan kuota harian
@@ -565,7 +566,7 @@ Matriks lengkap ada di bagian 3.
   - Rate limit: AI 20/hari per pengguna; tulis 60/menit per
     pengguna; OAuth 10/menit per IP.
   - Respons 429 dengan pesan bahasa sehari-hari saat kena batas.
-  - Endpoint `/ping` dan `/health` ringan dan tanpa D1.
+  - Endpoint `/api/ping` dan `/api/health` ringan dan tanpa D1.
 - **Rencana darurat bila terjadi:**
   1. Identifikasi sumber banjir dari log Worker (IP, pola
      endpoint, pola waktu).
@@ -597,7 +598,7 @@ Matriks lengkap ada di bagian 3.
     jalan lokal.
   - Uji smoke setelah setiap deploy Worker.
   - Deploy Worker yang gagal tidak menggantikan versi lama.
-  - Endpoint liveness `/health` untuk pemantau uptime.
+  - Endpoint liveness `/api/health` untuk pemantau uptime.
 - **Rencana darurat bila terjadi:**
   1. Periksa status Cloudflare (halaman status resmi) — bila
      gangguan vendor, tidak ada yang bisa dilakukan selain

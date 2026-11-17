@@ -2,9 +2,12 @@
 // D1 tiruan berbasis memori untuk unit test rute.
 // Mengimplementasikan permukaan D1Like (prepare/bind/all/first/run)
 // dengan eksekutor SQL mini yang menangani pola query yang dipakai
-// rute data: SELECT (WHERE =, IS NULL, <, >, IN, cursor keyset,
+// rute data: SELECT (WHERE =, IS NULL, <, >, LIKE, IN, cursor keyset,
 // ORDER BY, LIMIT, OFFSET, COUNT(*)), INSERT (termasuk OR REPLACE dan
-// ON CONFLICT DO UPDATE), UPDATE, DELETE, dan PRAGMA.
+// ON CONFLICT DO UPDATE — penyalinan excluded.* maupun increment
+// atomik `jumlah = rate_limits.jumlah + 1`), UPDATE (penetapan
+// parameter maupun aritmetika `jumlah = jumlah - 1`), DELETE, dan
+// PRAGMA.
 // Setiap query yang dijalankan dicatat di `queries` agar test bisa
 // menegaskan bahwa filter kepemilikan (user_id) selalu terikat.
 
@@ -24,14 +27,24 @@ type Kondisi =
   | { kind: 'gt'; col: string; param: number }
   | { kind: 'lte'; col: string; param: number }
   | { kind: 'gte'; col: string; param: number }
+  | { kind: 'like'; col: string; param: number }
   | { kind: 'isNull'; col: string }
   | { kind: 'isNotNull'; col: string }
+  | { kind: 'isNullOrLte'; col: string; param: number }
   | { kind: 'in'; col: string; params: number[] }
   | { kind: 'cursor'; params: [number, number, number] };
 
-/** Kunci unik per tabel untuk INSERT OR REPLACE. */
+/** Mengubah pola LIKE SQL (%, _) menjadi RegExp. */
+function polaLikeKeRegex(pola: string): RegExp {
+  const lolos = pola.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${lolos.replace(/%/g, '.*').replace(/_/g, '.')}$`, 's');
+}
+
+/** Kunci unik per tabel untuk INSERT OR REPLACE / OR IGNORE. */
 const KUNCI_UNIK: Record<string, string[]> = {
   wifi_sustained_samples: ['wifi_report_id', 'detik_ke'],
+  rate_limits: ['kunci'],
+  pin_attempts: ['user_id'],
 };
 
 function normalisasi(sql: string): string {
@@ -143,6 +156,13 @@ class FakeStatement implements D1StatementLike {
       } else if ((cocok = rendah.match(/^(\w+)\s+is null$/))) {
         kondisi.push({ kind: 'isNull', col: cocok[1] as string });
       } else if (
+        (cocok = rendah.match(/^\(\s*(\w+)\s+is null\s+or\s+(\w+)\s*<=\s*\?\)$/)) &&
+        cocok[1] === cocok[2]
+      ) {
+        // Guard atomik penguncian PIN: kunci hanya bila belum ada
+        // kunci aktif (null atau sudah kedaluwarsa).
+        kondisi.push({ kind: 'isNullOrLte', col: cocok[1] as string, param: indeksParam++ });
+      } else if (
         (cocok = rendah.match(
           /^\(\s*dibuat_pada\s*<\s*\?\s+or\s*\(\s*dibuat_pada\s*=\s*\?\s+and\s+id\s*<\s*\?\)\s*\)$/,
         ))
@@ -157,6 +177,8 @@ class FakeStatement implements D1StatementLike {
         const daftar: number[] = [];
         for (let i = 0; i < jumlah; i++) daftar.push(indeksParam++);
         kondisi.push({ kind: 'in', col: cocok[1] as string, params: daftar });
+      } else if ((cocok = rendah.match(/^(\w+)\s+like\s*\?$/))) {
+        kondisi.push({ kind: 'like', col: cocok[1] as string, param: indeksParam++ });
       } else if ((cocok = rendah.match(/^(\w+)\s*(<=|>=|<|>|=)\s*\?$/))) {
         const op = cocok[2] as string;
         const kind =
@@ -187,9 +209,22 @@ class FakeStatement implements D1StatementLike {
         case 'gte':
           if (!(banding(row[k.col], this.params[k.param]) >= 0)) return false;
           break;
+        case 'like': {
+          const pola = this.params[k.param];
+          const nilai = row[k.col];
+          if (typeof pola !== 'string' || typeof nilai !== 'string') return false;
+          if (!polaLikeKeRegex(pola).test(nilai)) return false;
+          break;
+        }
         case 'isNull':
           if (row[k.col] !== null && row[k.col] !== undefined) return false;
           break;
+        case 'isNullOrLte': {
+          const nilai = row[k.col];
+          if (nilai === null || nilai === undefined) break;
+          if (!(banding(nilai, this.params[k.param]) <= 0)) return false;
+          break;
+        }
         case 'isNotNull':
           if (row[k.col] === null || row[k.col] === undefined) return false;
           break;
@@ -316,7 +351,7 @@ class FakeStatement implements D1StatementLike {
 
   private jalankanInsert(): { rows: Row[]; changes: number } {
     const cocok = this.sql.match(
-      /^insert(?: or replace)? into (\w+) \(([^)]+)\) values \(([^)]+)\)(?: on conflict\((\w+)\) do update set (.+))?$/i,
+      /^insert(?: or replace| or ignore)? into (\w+) \(([^)]+)\) values \(([^)]+)\)(?: on conflict\((\w+)\) do update set (.+))?$/i,
     );
     if (!cocok) throw new Error(`FakeD1: INSERT tidak didukung: ${this.sql}`);
     const [, tabel, kolomTeks, nilaiTeks, konflikKol, setTeks] = cocok as unknown as [
@@ -328,6 +363,7 @@ class FakeStatement implements D1StatementLike {
       string | undefined,
     ];
     const ganti = this.sql.toLowerCase().startsWith('insert or replace');
+    const abaikan = this.sql.toLowerCase().startsWith('insert or ignore');
     const kolom = kolomTeks.split(',').map((k) => k.trim());
     const nilai = nilaiTeks.split(',').map((n) => n.trim());
     const barisBaru: Row = {};
@@ -338,6 +374,9 @@ class FakeStatement implements D1StatementLike {
         barisBaru[kolom[i] as string] = this.params[indeksParam++];
       } else if (token.toLowerCase() === 'null') {
         barisBaru[kolom[i] as string] = null;
+      } else if (/^-?\d+(\.\d+)?$/.test(token)) {
+        // Literal angka (mis. VALUES (?, 1, ?, ?) pada upsert atomik).
+        barisBaru[kolom[i] as string] = Number(token);
       } else if (/^'.*'$/.test(token)) {
         // Literal string SQL ('synced') — valid di D1 nyata.
         // Keterbatasan: literal yang mengandung koma tidak didukung
@@ -354,9 +393,33 @@ class FakeStatement implements D1StatementLike {
       const lama = tabelBaris.find((r) => r[konflikKol] === kunci);
       if (lama) {
         for (const tugas of setTeks.split(',').map((s) => s.trim())) {
+          // Penyalinan dari nilai yang diusulkan: col = excluded.col.
           const m = tugas.match(/^(\w+)\s*=\s*excluded\.(\w+)$/);
-          if (!m) throw new Error(`FakeD1: SET ON CONFLICT tidak didukung: ${tugas}`);
-          lama[m[1] as string] = barisBaru[m[2] as string];
+          if (m) {
+            lama[m[1] as string] = barisBaru[m[2] as string];
+            continue;
+          }
+          // Increment/decrement atomik: col = [tabel.]col +/- N.
+          // Dipakai rate limit (jumlah) dan penghitung PIN gagal.
+          const hitung = tugas.match(
+            /^(\w+)\s*=\s*(?:\w+\.)?(\w+)\s*([+-])\s*(\d+)$/,
+          );
+          if (hitung) {
+            const [, target, sumber, op, angka] = hitung as unknown as [
+              string,
+              string,
+              string,
+              string,
+              string,
+            ];
+            if (target !== sumber) {
+              throw new Error(`FakeD1: SET ON CONFLICT tidak didukung: ${tugas}`);
+            }
+            const nilaiLama = lama[target] as number;
+            lama[target] = op === '+' ? nilaiLama + Number(angka) : nilaiLama - Number(angka);
+            continue;
+          }
+          throw new Error(`FakeD1: SET ON CONFLICT tidak didukung: ${tugas}`);
         }
         return { rows: [], changes: 1 };
       }
@@ -368,6 +431,15 @@ class FakeStatement implements D1StatementLike {
       const idx = tabelBaris.findIndex((r) => kunci.every((k) => r[k] === barisBaru[k]));
       if (idx !== -1) tabelBaris.splice(idx, 1);
     }
+    if (abaikan) {
+      // INSERT OR IGNORE: baris dengan kunci unik yang sama dibiarkan,
+      // tanpa galat dan tanpa perubahan (changes 0).
+      const kunci = KUNCI_UNIK[tabel] ?? ['id'];
+      const ada = tabelBaris.some((r) => kunci.every((k) => r[k] === barisBaru[k]));
+      if (ada) {
+        return { rows: [], changes: 0 };
+      }
+    }
     tabelBaris.push(barisBaru);
     return { rows: [], changes: 1 };
   }
@@ -378,8 +450,24 @@ class FakeStatement implements D1StatementLike {
     const [, tabel, setTeks, where] = cocok as unknown as [string, string, string, string];
     const tugas = setTeks.split(',').map((s) => s.trim());
     const penetapan: { col: string; param: number }[] = [];
+    const aritmetika: { col: string; op: '+' | '-'; angka: number }[] = [];
     let indeksParam = 0;
     for (const t of tugas) {
+      // Aritmetika atas nilai lama: col = [tabel.]col +/- N
+      // (dipakai pelepasan cadangan kuota AI: jumlah = jumlah - 1).
+      const hitung = t.match(/^(\w+)\s*=\s*(?:\w+\.)?(\w+)\s*([+-])\s*(\d+)$/);
+      if (hitung) {
+        const [, target, sumber, op, angka] = hitung as unknown as [
+          string,
+          string,
+          string,
+          string,
+          string,
+        ];
+        if (target !== sumber) throw new Error(`FakeD1: SET UPDATE tidak didukung: ${t}`);
+        aritmetika.push({ col: target, op: op as '+' | '-', angka: Number(angka) });
+        continue;
+      }
       const m = t.match(/^(\w+)\s*=\s*\?$/);
       if (!m) throw new Error(`FakeD1: SET UPDATE tidak didukung: ${t}`);
       penetapan.push({ col: m[1] as string, param: indeksParam++ });
@@ -389,6 +477,10 @@ class FakeStatement implements D1StatementLike {
     for (const row of this.db.tables[tabel] ?? []) {
       if (!this.cocok(row, kondisi)) continue;
       for (const p of penetapan) row[p.col] = this.params[p.param];
+      for (const a of aritmetika) {
+        const nilaiLama = row[a.col] as number;
+        row[a.col] = a.op === '+' ? nilaiLama + a.angka : nilaiLama - a.angka;
+      }
       berubah++;
     }
     return { rows: [], changes: berubah };

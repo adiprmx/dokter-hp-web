@@ -99,8 +99,8 @@ Authorization: Bearer <token perangkat>
 ```
 
 Token perangkat **hanya** berlaku untuk rute `/api/sync/*` — tidak
-bisa dipakai untuk endpoint web lain (`/health-checks`,
-`/wifi-reports`, `/ai/*`, `/account/*`).
+bisa dipakai untuk endpoint web lain (`/api/health-checks`,
+`/api/wifi-reports`, `/api/ai/*`, `/api/account/*`).
 
 ### 3.1 `POST /api/sync/push` — kirim batch perubahan lokal
 
@@ -392,7 +392,7 @@ tombstone (lihat bagian 11).
   sehingga `deletedAt` lokal diisi. Baris lokal yang dibuat selama
   offline (tidak ada di server karena belum pernah di-push) tidak
   tersentuh rekonsiliasi — ia tetap `pending` dan akan di-push.
-- Hapus akun adalah pengecualian: `DELETE /account` menghapus seluruh
+- Hapus akun adalah pengecualian: `DELETE /api/account` menghapus seluruh
   data pengguna di server lewat cascade (hard delete, di luar
   mekanisme sinkron). Token perangkat ikut tidak berlaku karena
   `user_id` pemiliknya sudah tidak ada; salinan lokal di APK tidak

@@ -271,8 +271,9 @@ terlihat ("Memuat riwayat...") di samping kerangka.
 Cincin skor 0-100 dengan angka dan kategori sebagai teks di
 tengah. SVG cincin disembunyikan dari pembaca layar
 (`aria-hidden`, a11y.md 6.4); angka dan kategori dibaca sebagai
-teks biasa. Kategori: Baik (80 ke atas, hijau), Cukup (60-79,
-kuning), Perlu perhatian (di bawah 60, merah). Kategori selalu
+teks biasa. Kategori: Baik (80 ke atas, hijau), Cukup (50–79,
+kuning), Perlu perhatian (di bawah 50, merah) — ambang kanonis
+80/50 (K-31). Kategori selalu
 berupa label teks, bukan hanya warna cincin.
 
 Skor `null` berarti belum ada data: tampil "tidak tersedia",

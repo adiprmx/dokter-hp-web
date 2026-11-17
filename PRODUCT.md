@@ -387,17 +387,19 @@ bertahan).
 
 ### 7.5 users (tambahan web)
 
-`id`, `email`, `google_sub` (pengenal Google, unik),
-`nama`, `pin_hash`, `pin_salt`, `pin_gagal_berturut` (penghitung
-percobaan PIN salah), `pin_terkunci_sampai` (TEXT ISO 8601),
-`dibuat_pada`, `updated_at`.
+`id`, `email`, `nama`, `provider`, `pin_hash`, `pin_salt`,
+`dibuat_pada`. Tidak ada kolom `google_sub` (identitas dikunci
+`email` + `provider`, K-03) dan tidak ada kolom penghitung PIN
+di tabel ini — penghitung PIN salah (`gagal_berturut`) dan
+`terkunci_sampai` ada di tabel `pin_attempts` (migrasi 0004).
 
 ### 7.6 sessions (tambahan web)
 
 `id`, `user_id`, `token_hash` (SHA-256 dari token sesi; token mentah
-tidak pernah disimpan), `terkunci` (1 bila sesi belum dibuka dengan
-PIN), `dibuat_pada`, `kedaluwarsa_pada`, `user_agent`,
-`ip_terakhir`.
+tidak pernah disimpan), `expires_at`, `dibuat_pada`, `user_agent`,
+`ip_terakhir`. Tidak ada kolom `terkunci` di tabel ini — sesi yang
+sudah dibuka dengan PIN ditandai baris di tabel `pin_unlocks`
+(migrasi 0004).
 
 ### 7.7 wifi_sustained_samples (tambahan web)
 

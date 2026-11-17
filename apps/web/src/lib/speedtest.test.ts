@@ -1,6 +1,7 @@
 // Vitest untuk fungsi murni di speedtest.ts (klasifikasi,
 // median, hitung kecepatan, format, vonis tes bertahan, label
-// sinyal). Tanpa jaringan — fungsi ukur tidak diuji di sini.
+// sinyal) + jalur timeout ukurKecepatanUnduh (T-41, fetch tiruan
+// yang menggantung sampai sinyal abort — tanpa jaringan nyata).
 //
 // Ambang klasifikasi dari PRODUCT.md 4.4 / api-contracts.md 4:
 //   sangat lambat < 50, lambat < 200, cukup < 1000,
@@ -9,15 +10,18 @@
 //   bertahan bila rata-rata >= 1000 KB/detik dan tidak ada sampel
 //   < 200 setelah detik ke-3.
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   formatKecepatan,
   formatLatensi,
+  GalatTes,
   hitungKecepatanKbps,
   klasifikasiKecepatan,
   labelSinyalDariDbm,
   median,
   nilaiTesBertahan,
+  TIMEOUT_TES_MS,
+  ukurKecepatanUnduh,
 } from "./speedtest";
 
 describe("klasifikasiKecepatan (PRODUCT.md 4.4)", () => {
@@ -219,5 +223,78 @@ describe("labelSinyalDariDbm", () => {
     [-90, "lemah"],
   ])("%s dBm -> %s", (dbm, label) => {
     expect(labelSinyalDariDbm(dbm)).toBe(label);
+  });
+});
+
+describe("ukurKecepatanUnduh — jalur timeout (T-41)", () => {
+  // Fetch tiruan yang berperilaku seperti fetch asli terhadap sinyal
+  // abort: menggantung selamanya, lalu menolak dengan AbortError saat
+  // sinyal dibatalkan (inilah yang dilakukan browser saat
+  // AbortController.abort() dipanggil oleh timer timeout).
+  function pasangFetchMenggantung(): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: { signal?: AbortSignal }) => {
+        return new Promise<never>((_resolve, reject) => {
+          const sinyal = init?.signal;
+          if (sinyal?.aborted) {
+            reject(new DOMException("Dibatalkan.", "AbortError"));
+            return;
+          }
+          sinyal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Dibatalkan.", "AbortError")),
+            { once: true },
+          );
+        });
+      }),
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("timeout kustom singkat: fetch menggantung -> GalatTes kode timeout", async () => {
+    pasangFetchMenggantung();
+    const janji = ukurKecepatanUnduh({ timeoutMs: 50 });
+    await expect(janji).rejects.toBeInstanceOf(GalatTes);
+    await expect(janji).rejects.toMatchObject({ kode: "timeout" });
+  });
+
+  it("batas baku adalah TIMEOUT_TES_MS = 15000 (PRODUCT.md 4.4)", async () => {
+    expect(TIMEOUT_TES_MS).toBe(15000);
+    pasangFetchMenggantung();
+    vi.useFakeTimers();
+    let selesai = false;
+    const janji = ukurKecepatanUnduh();
+    void janji.then(
+      () => {
+        selesai = true;
+      },
+      () => {
+        selesai = true;
+      },
+    );
+    // 1 ms sebelum batas: janji masih menggantung, belum dibatalkan.
+    await vi.advanceTimersByTimeAsync(TIMEOUT_TES_MS - 1);
+    expect(selesai).toBe(false);
+    // Tepat di batas 15 detik: timer membatalkan, janji menolak timeout.
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(janji).rejects.toMatchObject({ kode: "timeout" });
+    expect(selesai).toBe(true);
+  });
+
+  it("pembatalan pengguna diteruskan sebagai AbortError, bukan timeout", async () => {
+    pasangFetchMenggantung();
+    const pengendali = new AbortController();
+    const janji = ukurKecepatanUnduh({
+      timeoutMs: 10_000,
+      sinyal: pengendali.signal,
+    });
+    pengendali.abort();
+    await expect(janji).rejects.toBeInstanceOf(DOMException);
+    await expect(janji).rejects.toMatchObject({ name: "AbortError" });
   });
 });

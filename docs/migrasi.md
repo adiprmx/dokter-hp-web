@@ -361,6 +361,13 @@ Tabel di bawah ini tidak ada di migrasi APK; definisinya adalah
 terjemahan langsung dari skema D1 (`ARCHITECTURE.md` bagian 5)
 ke tipe Postgres, memakai Opsi A.
 
+Catatan: definisi Postgres di bawah adalah skema Supabase TUJUAN
+migrasi, bukan skema D1 web saat ini — kolom seperti `google_sub`,
+`pin_gagal_berturut`, dan `pin_terkunci_sampai` HANYA ada di sisi
+Supabase. D1 web memakai `terkunci_sampai` di tabel `pin_attempts`
+(migrasi 0004) dan tanpa `google_sub` (lihat `ARCHITECTURE.md`
+§5).
+
 ```sql
 -- users (tambahan web).
 create table if not exists public.users (
@@ -498,9 +505,9 @@ Contoh di bawah memakai data ilustratif (bukan data pengguna
 nyata) dan menunjukkan bentuk hasil konversi. Nilai `id` dan
 waktu hanya contoh format.
 
-**`users` (perhatikan: tanpa nilai secret apa pun — `pin_hash`
-dan `pin_salt` adalah hash, bukan PIN asli, dan ikut pindah
-apa adanya):**
+**`users` (skema Supabase, bukan D1 web — perhatikan: tanpa nilai
+secret apa pun — `pin_hash` dan `pin_salt` adalah hash, bukan PIN
+asli, dan ikut pindah apa adanya):**
 
 ```sql
 BEGIN;

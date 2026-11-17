@@ -31,3 +31,24 @@ jobs:
 
       - name: Tes unit frontend dan API
         run: npm run test
+
+  # Audit keamanan dependensi (Red ronde 1): laporkan kerentanan
+  # high/critical, tetapi tidak menggagalkan CI utama pada ronde ini.
+  audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Siapkan Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Instal dependensi
+        run: npm ci
+
+      - name: Audit dependensi (high+)
+        run: npm audit --audit-level=high

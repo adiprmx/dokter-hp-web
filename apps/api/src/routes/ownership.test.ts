@@ -568,7 +568,7 @@ describe('akun', () => {
     });
     expect(status).toBe(200);
     const cookie = res.headers.get('Set-Cookie') ?? '';
-    expect(cookie).toContain('dokter_hp_session=');
+    expect(cookie).toContain('__Host-dokter_hp_session=');
     expect(cookie).toContain('Max-Age=0');
   });
 
@@ -629,9 +629,13 @@ describe('akun', () => {
   });
 
   it('hapus akun menghapus seluruh data pengguna itu saja + cookie', async () => {
+    // K-72: sesi harus segar (dibuat ≤ 10 menit lalu).
+    const sesiUtama = db.tables.sessions.find((r) => r.id === SESI_A_UTAMA);
+    if (sesiUtama) sesiUtama.dibuat_pada = new Date().toISOString();
     const { status, body, res } = await minta(app, db, '/account', {
       method: 'DELETE',
       userId: USER_A,
+      sessionId: SESI_A_UTAMA,
       body: { konfirmasi: 'HAPUS' },
     });
     expect(status).toBe(200);
@@ -655,15 +659,69 @@ describe('akun', () => {
   });
 
   it('hapus akun menerima konfirmasi "DELETE" (K-26)', async () => {
+    const sesiUtama = db.tables.sessions.find((r) => r.id === SESI_A_UTAMA);
+    if (sesiUtama) sesiUtama.dibuat_pada = new Date().toISOString();
     const { status, body } = await minta(app, db, '/account', {
       method: 'DELETE',
       userId: USER_A,
+      sessionId: SESI_A_UTAMA,
       body: { konfirmasi: 'DELETE' },
     });
     expect(status).toBe(200);
     expect(body.data).toEqual({ deleted: true, email: 'a@contoh.id' });
     expect(db.baris('users').some((r) => r.id === USER_A)).toBe(false);
     expect(db.baris('users').some((r) => r.id === USER_B)).toBe(true);
+  });
+
+  it('hapus akun ditolak 403 LOGIN_ULANG_DIPERLUKAN bila sesi sudah lama (K-72, R-09)', async () => {
+    // Seed: SESI_A_UTAMA dibuat 2026-11-17 — jauh di luar tenggang 10 menit.
+    const { status, body } = await minta(app, db, '/account', {
+      method: 'DELETE',
+      userId: USER_A,
+      sessionId: SESI_A_UTAMA,
+      body: { konfirmasi: 'HAPUS' },
+    });
+    expect(status).toBe(403);
+    expect(body.error?.code).toBe('LOGIN_ULANG_DIPERLUKAN');
+    expect(db.baris('users').some((r) => r.id === USER_A)).toBe(true);
+  });
+
+  it('hapus akun diizinkan bila PIN baru dibuka walau sesi sudah lama (K-72)', async () => {
+    db.tables.pin_unlocks = [
+      { session_id: SESI_A_UTAMA, dibuka_pada: new Date().toISOString() },
+    ];
+    const { status, body } = await minta(app, db, '/account', {
+      method: 'DELETE',
+      userId: USER_A,
+      sessionId: SESI_A_UTAMA,
+      body: { konfirmasi: 'HAPUS' },
+    });
+    expect(status).toBe(200);
+    expect(body.data).toEqual({ deleted: true, email: 'a@contoh.id' });
+  });
+
+  it('hapus akun menghapus baris rate_limits milik pengguna itu saja (R-14)', async () => {
+    const sesiUtama = db.tables.sessions.find((r) => r.id === SESI_A_UTAMA);
+    if (sesiUtama) sesiUtama.dibuat_pada = new Date().toISOString();
+    db.tables.rate_limits = [
+      { kunci: `ai:${USER_A}:2026-11-17`, jumlah: 3, jendela_mulai: '2026-11-17T00:00:00.000Z', kedaluwarsa_pada: '2999-01-01T00:00:00.000Z' },
+      { kunci: `tulis:${USER_A}:2026-11-17T10:00`, jumlah: 5, jendela_mulai: '2026-11-17T10:00:00.000Z', kedaluwarsa_pada: '2999-01-01T00:00:00.000Z' },
+      { kunci: `ai:${USER_B}:2026-11-17`, jumlah: 2, jendela_mulai: '2026-11-17T00:00:00.000Z', kedaluwarsa_pada: '2999-01-01T00:00:00.000Z' },
+      { kunci: 'oauth:203.0.113.9:2026-11-17T10:00', jumlah: 1, jendela_mulai: '2026-11-17T10:00:00.000Z', kedaluwarsa_pada: '2999-01-01T00:00:00.000Z' },
+    ];
+    const { status } = await minta(app, db, '/account', {
+      method: 'DELETE',
+      userId: USER_A,
+      sessionId: SESI_A_UTAMA,
+      body: { konfirmasi: 'HAPUS' },
+    });
+    expect(status).toBe(200);
+    const sisa = db.baris('rate_limits').map((r) => r.kunci);
+    expect(sisa).not.toContain(`ai:${USER_A}:2026-11-17`);
+    expect(sisa).not.toContain(`tulis:${USER_A}:2026-11-17T10:00`);
+    // Baris pengguna B dan kunci per-IP utuh.
+    expect(sisa).toContain(`ai:${USER_B}:2026-11-17`);
+    expect(sisa).toContain('oauth:203.0.113.9:2026-11-17T10:00');
   });
 });
 

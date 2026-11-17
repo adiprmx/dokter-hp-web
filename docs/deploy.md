@@ -145,35 +145,36 @@ dicatat di log deploy.
 
 **Langkah 3 — Jalankan migrasi.**
 
-Skema lengkap ada di `ARCHITECTURE.md` bagian 5
-(`apps/api/migrations/0001_init.sql`): tabel `users`, `profiles`,
-`sessions`, `health_checks`, `wifi_reports`, `wifi_sustained_samples`,
-`ai_diagnoses`, beserta indeksnya.
+Migrasi adalah satu-satunya sumber kebenaran skema:
+`apps/api/migrations/0001_init.sql` s.d.
+`0004_pin_rate_sessions.sql` (11 tabel: `users`, `profiles`,
+`sessions`, `health_checks`, `wifi_reports`,
+`wifi_sustained_samples`, `ai_diagnoses`, `ai_cache`,
+`pin_attempts`, `pin_unlocks`, `rate_limits`). JANGAN membuat tabel
+manual lewat endpoint query — cuplikan CREATE TABLE manual mudah
+menyimpang dari migrasi (pernah salah total: kolom `google_sub`,
+`pin_gagal_berturut`, `pin_terkunci_sampai`, dan `updated_at` tidak
+ada di 0001).
 
-Kirim migrasi dalam kelompok kecil lewat endpoint query, dan baca hasil
-tiap kelompok sebelum mengirim kelompok berikutnya:
+Jalankan semua migrasi sekaligus dari folder `apps/api`:
 
 ```bash
-DBID=<database_id dari langkah 2>
-
-# Contoh kelompok 1: tabel users + profiles
-python3 $CFW POST "/accounts/$ACCT/d1/database/$DBID/query" \
-  -d '{"sql":"CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT NOT NULL, google_sub TEXT NOT NULL UNIQUE, nama TEXT NOT NULL, pin_hash TEXT, pin_salt TEXT, pin_gagal_berturut INTEGER NOT NULL DEFAULT 0, pin_terkunci_sampai TEXT, dibuat_pada TEXT NOT NULL DEFAULT (strftime('\''%Y-%m-%dT%H:%M:%fZ'\'', '\''now'\'')), updated_at TEXT NOT NULL DEFAULT (strftime('\''%Y-%m-%dT%H:%M:%fZ'\'', '\''now'\'')));"}'
+cd apps/api
+npx wrangler d1 migrations apply dokter-hp-db --remote
 ```
 
-Kelompok yang disarankan (6 kelompok, sesuai urutan dependensi):
+Perintah ini menerapkan 0001–0004 secara berurutan dan mencatat
+migrasi yang sudah diterapkan, sehingga aman dijalankan ulang
+(migrasi yang sama tidak diterapkan dua kali). Baca outputnya:
+keempat file harus berstatus diterapkan tanpa galat sebelum lanjut.
+Perintah remote membutuhkan wrangler terautentikasi
+(`CLOUDFLARE_API_TOKEN` dari token akun yang sama dengan `cfw_t.py`).
 
-1. `users` + indeks `users_email_idx`
-2. `profiles`
-3. `sessions` + indeksnya
-4. `health_checks` + indeksnya
-5. `wifi_reports` + `wifi_sustained_samples` + indeksnya
-6. `ai_diagnoses` + indeksnya
-
-Alternatif: impor satu file SQL lewat endpoint import D1
-(`POST /accounts/$ACCT/d1/database/$DBID/import`, multipart dengan file
-`0001_init.sql`). Bila endpoint import gagal, kembali ke cara kelompok
-kecil di atas.
+Bila wrangler remote tidak bisa dipakai, jalankan ISI FILE migrasi
+apa adanya lewat endpoint query D1, berurutan 0001 → 0004, dan baca
+hasil tiap file sebelum lanjut ke file berikutnya. Jangan pernah
+menulis ulang SQL migrasi dengan tangan — file migrasi adalah
+sumber kebenaran.
 
 **Langkah 4 — Verifikasi skema.**
 
@@ -182,9 +183,10 @@ python3 $CFW POST "/accounts/$ACCT/d1/database/$DBID/query" \
   -d '{"sql":"SELECT name FROM sqlite_master WHERE type = '\''table'\'' ORDER BY name;"}'
 ```
 
-Hasil yang diharapkan: tujuh tabel terdaftar —
-`ai_diagnoses`, `health_checks`, `profiles`, `sessions`, `users`,
-`wifi_reports`, `wifi_sustained_samples`.
+Hasil yang diharapkan: sebelas tabel terdaftar — `ai_cache`,
+`ai_diagnoses`, `health_checks`, `pin_attempts`, `pin_unlocks`,
+`profiles`, `rate_limits`, `sessions`, `users`, `wifi_reports`,
+`wifi_sustained_samples`.
 
 **Langkah 5 — Catat hasil.**
 
@@ -271,7 +273,7 @@ Keterangan:
 - Binding KV dicantumkan hanya bila namespace KV dibuat (bagian 1.2).
 - `GOOGLE_CLIENT_ID` adalah nilai publik (bukan secret), sehingga boleh
   sebagai `plain_text`. Secret (`GEMINI_API_KEY`,
-  `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`) **tidak** dicantumkan di
+  `GOOGLE_CLIENT_SECRET`, `PIN_PEPPER`) **tidak** dicantumkan di
   metadata — secret diatur terpisah di bagian 1.4.
 - `compatibility_date` sesuaikan dengan tanggal rilis (contoh di atas
   memakai tanggal dokumen ini).
@@ -312,8 +314,8 @@ deploy ulang frontend. Custom domain bukan bagian rilis pertama.
 **Langkah 5 — Verifikasi Worker.**
 
 ```bash
-curl -s https://dokter-hp-api.<subdomain>.workers.dev/health
-curl -s https://dokter-hp-api.<subdomain>.workers.dev/ping
+curl -s https://dokter-hp-api.<subdomain>.workers.dev/api/health
+curl -s https://dokter-hp-api.<subdomain>.workers.dev/api/ping
 ```
 
 Hasil yang diharapkan: HTTP 200 (lihat detail di bagian 4.1).
@@ -329,7 +331,7 @@ Nilai dimasukkan saat deploy dari sumber amannya masing-masing
 |---|---|
 | `GEMINI_API_KEY` | Kunci Gemini yang sudah terverifikasi valid (Tim Verifikasi Kredensial, 17 Nov 2026) |
 | `GOOGLE_CLIENT_SECRET` | Google Cloud Console — client secret dari OAuth client yang dibuat untuk proyek ini |
-| `SESSION_SECRET` | Dibangkitkan acak saat deploy (minimal 32 byte, dari generator acak kriptografis); dipakai untuk menandatangani state OAuth / cookie sementara |
+| `PIN_PEPPER` | Dibangkitkan acak saat deploy (minimal 32 byte, dari generator acak kriptografis); dipakai sebagai pepper HMAC-SHA256 untuk hash PIN (K-71). Bila tidak diatur, endpoint PIN mengembalikan 500 (fail-closed) |
 
 **Cara mengatur (REST API):**
 
@@ -342,7 +344,7 @@ python3 $CFW PUT "/accounts/$ACCT/workers/scripts/dokter-hp-api/secrets" \
   -d '{"name":"GOOGLE_CLIENT_SECRET","text":"<nilai>","type":"secret_text"}'
 
 python3 $CFW PUT "/accounts/$ACCT/workers/scripts/dokter-hp-api/secrets" \
-  -d '{"name":"SESSION_SECRET","text":"<nilai>","type":"secret_text"}'
+  -d '{"name":"PIN_PEPPER","text":"<nilai>","type":"secret_text"}'
 ```
 
 Hasil yang diharapkan per perintah: HTTP 200 dengan `"success": true`.
@@ -364,13 +366,16 @@ interaktif, bukan dari argumen perintah.
 
 - Mengatur secret tidak me-restart Worker secara eksplisit — Worker
   memakai secret terbaru pada request berikutnya. Uji endpoint
-  `/ai/diagnose` setelah secret diatur (bagian 4.2).
-- `SESSION_SECRET` yang hilang berarti state OAuth yang sedang berjalan
-  menjadi tidak valid; sesi pengguna yang sudah ada (token hash di D1)
-  tidak terpengaruh. Simpan salinan `SESSION_SECRET` di tempat aman
-  yang sama dengan secret lain (di luar repo).
+  `/api/ai/diagnose` setelah secret diatur (bagian 4.2).
+- `PIN_PEPPER` yang hilang atau berubah berarti SEMUA PIN tersimpan
+  tidak bisa diverifikasi lagi (hash memakai pepper sebagai kunci
+  HMAC). Simpan salinannya di tempat aman yang sama dengan secret
+  lain (di luar repo), dan JANGAN PERNAH merotasi `PIN_PEPPER`
+  setelah ada pengguna yang mengatur PIN — rotasi hanya aman sebelum
+  peluncuran, saat belum ada PIN tersimpan.
 - Rotasi secret: atur ulang dengan perintah yang sama memakai nilai
-  baru; tidak perlu deploy ulang script.
+  baru; tidak perlu deploy ulang script. Pengecualian: `PIN_PEPPER`
+  tidak boleh dirotasi setelah ada PIN tersimpan (lihat di atas).
 
 ### 1.5 Pages: buat proyek + sambung GitHub + atur build + env
 
@@ -561,7 +566,7 @@ sebelumnya. Jangan melompati tahap.
 | 1 | Buat database D1 `dokter-hp-db` | 1.1 | `database_id` tercatat |
 | 2 | Jalankan migrasi `0001_init.sql` (6 kelompok) | 1.1 | 7 tabel terverifikasi |
 | 3 | Buat namespace KV (hanya bila diputuskan perlu) | 1.2 | Namespace ID tercatat / dilewati dengan sadar |
-| 4 | Bangun bundle Worker dan upload + bindings D1/KV | 1.3 | Upload sukses; `/health` merespons |
+| 4 | Bangun bundle Worker dan upload + bindings D1/KV | 1.3 | Upload sukses; `/api/health` merespons |
 | 5 | Atur 3 secret Worker | 1.4 | Ketiga secret terdaftar |
 | 6 | Aktifkan subdomain workers.dev; catat URL API | 1.3 | URL API tercatat |
 | 7 | Buat proyek Pages + sambung GitHub + build + env `VITE_API_BASE_URL` | 1.5 | Deploy pertama sukses |
@@ -589,12 +594,12 @@ Ganti `<api>` dengan URL Worker (`https://dokter-hp-api.<subdomain>.workers.dev`
 
 | # | Cek | Perintah / cara | Hasil yang diharapkan |
 |---|---|---|---|
-| 1 | Liveness | `curl -s <api>/health` | HTTP 200, body memuat `"status": "ok"` |
-| 2 | Latensi HTTP | `curl -s <api>/ping` | HTTP 200, body memuat `"ok": true` dan angka `t` (ms) |
-| 3 | OAuth redirect | Buka `<api>/auth/google` di browser | Redirect 302 ke halaman login Google (`accounts.google.com`) |
-| 4 | Endpoint lindung tanpa sesi | `curl -s -o /dev/null -w "%{http_code}" <api>/health-checks` | HTTP 401 |
-| 5 | Endpoint lindung tanpa sesi | `curl -s -o /dev/null -w "%{http_code}" <api>/wifi-reports` | HTTP 401 |
-| 6 | Endpoint lindung tanpa sesi | `curl -s -o /dev/null -w "%{http_code}" <api>/auth/me` | HTTP 401 |
+| 1 | Liveness | `curl -s <api>/api/health` | HTTP 200, body memuat `"status": "ok"` |
+| 2 | Latensi HTTP | `curl -s <api>/api/ping` | HTTP 200, body memuat `"ok": true` dan angka `t` (ms) |
+| 3 | OAuth redirect | Buka `<api>/api/auth/google` di browser | Redirect 302 ke halaman login Google (`accounts.google.com`) |
+| 4 | Endpoint lindung tanpa sesi | `curl -s -o /dev/null -w "%{http_code}" <api>/api/health-checks` | HTTP 401 |
+| 5 | Endpoint lindung tanpa sesi | `curl -s -o /dev/null -w "%{http_code}" <api>/api/wifi-reports` | HTTP 401 |
+| 6 | Endpoint lindung tanpa sesi | `curl -s -o /dev/null -w "%{http_code}" <api>/api/auth/me` | HTTP 401 |
 | 7 | Rute tidak dikenal | `curl -s -o /dev/null -w "%{http_code}" <api>/tidak-ada` | HTTP 404 dengan envelope galat JSON standar |
 
 ### 4.2 Worker API (dengan login — uji smoke manual)
@@ -604,12 +609,13 @@ Lakukan sekali setelah deploy pertama, memakai akun Google penguji:
 | # | Cek | Hasil yang diharapkan |
 |---|---|---|
 | 1 | Masuk dengan Google (dari landing Pages) | Redirect ke Google, kembali ke `/dashboard`, sesi bertahan setelah muat ulang halaman |
-| 2 | `GET /auth/me` | HTTP 200, berisi id, nama, email, `pin_diatur` |
+| 2 | `GET /api/auth/me` | HTTP 200, berisi id, nama, email, `pin_diatur` |
 | 3 | Buat satu `health_checks` (Diagnosis satu ketuk) | HTTP 201, skor tersimpan; muncul di riwayat |
 | 4 | Buat satu `wifi_reports` (tes WiFi) + 30 sampel tes bertahan | HTTP 201; sampel tersimpan; grafik tampil |
-| 5 | `POST /ai/diagnose` dengan satu pertanyaan | HTTP 200, jawaban tampil dan tersimpan ke riwayat diagnosis (membuktikan `GEMINI_API_KEY` berfungsi) |
+| 5 | `POST /api/ai/diagnose` dengan satu pertanyaan | HTTP 200, jawaban tampil dan tersimpan ke riwayat diagnosis (membuktikan `GEMINI_API_KEY` berfungsi) |
 | 6 | Atur PIN, tutup sesi, buka PIN | PIN benar membuka; PIN salah ditolak; kunci 30 detik setelah 5 salah berturut-turut |
-| 7 | Keluar | Sesi terhapus; `/auth/me` kembali 401 |
+| 7 | Keluar | Sesi terhapus; `/api/auth/me` kembali 401 |
+| 8 | Ubah PIN dari sesi terkunci (R-02) | Tanpa PIN lama ditolak (`PIN_LAMA_DIPERLUKAN`); dengan PIN lama berhasil dan sesi TETAP terkunci — buka lewat `/kunci` |
 
 Bila langkah 5 gagal dengan pesan "Diagnosis AI sedang tidak tersedia",
 periksa secret `GEMINI_API_KEY` (bagian 1.4) dan log Worker sebelum
@@ -630,9 +636,26 @@ Jalankan cek yang sama di `<pages>` dan `<vercel>`:
 | 7 | Konsol browser | Tanpa galat JavaScript yang menghentikan aplikasi |
 | 8 | Tampilan HP (lebar 360 px) | Tata letak rapi, tanpa geser horizontal, area sentuh cukup besar |
 
-### 4.4 Kriteria lolos
+### 4.4 CORS + header keamanan (preflight)
 
-Deploy dinyatakan lolos bila seluruh cek 4.1, 4.3, dan 4.2 (sekali,
+| # | Cek | Perintah / cara | Hasil yang diharapkan |
+|---|---|---|---|
+| 1 | Preflight dari origin Pages | `curl -s -D - -o /dev/null -X OPTIONS <api>/api/auth/me -H "Origin: <pages>" -H "Access-Control-Request-Method: GET"` | Header `Access-Control-Allow-Origin: <pages>` hadir |
+| 2 | Preflight dari origin asing | Perintah yang sama dengan `-H "Origin: https://jahat.example.com"` | TIDAK ADA header `Access-Control-Allow-Origin` (fail-closed, K-73) |
+| 3 | Header keamanan Worker | `curl -s -D - -o /dev/null <api>/api/auth/me` | `Content-Security-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` hadir |
+| 4 | Header keamanan Pages | `curl -s -D - -o /dev/null <pages>/` | CSP yang sama hadir; `connect-src` memuat origin API |
+| 5 | Mutasi dari origin asing | `curl -s -o /dev/null -w "%{http_code}" -X POST <api>/api/auth/pin/verify -H "Origin: https://jahat.example.com" -H "Content-Type: application/json" -d '{"pin":"1357"}'` | HTTP 403 (bukan 401) |
+
+Setelah URL API final diketahui (bagian 1.3 langkah 4), persempit
+`connect-src` di `apps/web/public/_headers`: ganti wildcard
+`https://*.workers.dev` dengan origin API persis
+(`https://dokter-hp-api.<subdomain>.workers.dev`), lalu deploy ulang
+frontend. Wildcard hanya placeholder agar aplikasi berfungsi sebelum
+subdomain diketahui — bukan konfigurasi akhir.
+
+### 4.5 Kriteria lolos
+
+Deploy dinyatakan lolos bila seluruh cek 4.1, 4.3, 4.4, dan 4.2 (sekali,
 setelah deploy pertama) berhasil di kedua mirror. Bila ada cek yang
 gagal, perbaiki penyebabnya dan ulangi cek yang gagal — jangan
 menyatakan deploy selesai dengan cek yang masih gagal.
@@ -743,7 +766,17 @@ menaruh kunci, secret, atau token pada variabel `VITE_*`.
 | Nama | Sumber | Wajib / opsional | Keterangan |
 |---|---|---|---|
 | `GOOGLE_CLIENT_ID` | Google Cloud Console — OAuth client proyek ini | **Wajib** | Client ID publik Google OAuth. Boleh sebagai `plain_text` di metadata binding. |
+| `GOOGLE_REDIRECT_URI` | URL Worker dari bagian 1.3 langkah 4 + `/api/auth/google/callback` | **Wajib** | Bukan rahasia (terlihat di URL OAuth). Harus cocok persis dengan redirect URI yang didaftarkan di Google Cloud Console. |
+| `ALLOWED_ORIGIN` | Domain Pages produksi (dan mirror Vercel, bila ada) | **Wajib** | Daftar origin frontend yang boleh memanggil API, dipisah koma (K-73). Bila tidak diatur, Worker hanya mengizinkan origin loopback / sama-host (fail-closed) — frontend produksi tidak bisa memanggil API. |
+| `FRONTEND_URL` | Domain Pages produksi | **Wajib** | Basis URL frontend; dipakai untuk redirect setelah masuk Google dan validasi tujuan redirect (R-06). |
 | `GEMINI_MODEL` | Diputuskan tim implementasi | Opsional | Nama model Gemini yang dipakai. Bila tidak diatur, Worker memakai nilai default di kode. |
+
+Nilai `ALLOWED_ORIGIN` dan `FRONTEND_URL` di `wrangler.toml` saat ini
+masih placeholder (`https://dokter-hp-web.pages.dev`) — tim deploy
+WAJIB menggantinya dengan domain sebenarnya sebelum deploy pertama,
+dan menambahkan domain mirror Vercel ke `ALLOWED_ORIGIN` (dipisah
+koma) bila mirror dipakai. Setelah deploy, verifikasi CORS dengan
+preflight dari §4.4.
 
 ### 6.3 Worker — secret (secret_text, tidak pernah ke browser/repo)
 
@@ -751,7 +784,7 @@ menaruh kunci, secret, atau token pada variabel `VITE_*`.
 |---|---|---|---|
 | `GEMINI_API_KEY` | Kunci Gemini (terverifikasi valid, 17 Nov 2026) | **Wajib** | Kunci API Gemini untuk Diagnosis AI. Hanya dipakai server-side di Worker. |
 | `GOOGLE_CLIENT_SECRET` | Google Cloud Console — OAuth client proyek ini | **Wajib** | Client secret Google OAuth; dipakai saat penukaran kode di server. |
-| `SESSION_SECRET` | Dibangkitkan acak saat deploy (minimal 32 byte) | **Wajib** | Menandatangani state OAuth / cookie sementara. Simpan salinannya di tempat aman di luar repo. |
+| `PIN_PEPPER` | Dibangkitkan acak saat deploy (minimal 32 byte) | **Wajib** | Pepper HMAC-SHA256 untuk hash PIN (K-71). Bila tidak diatur, endpoint PIN mengembalikan 500. JANGAN dirotasi setelah ada PIN tersimpan. Simpan salinannya di tempat aman di luar repo. |
 
 ### 6.4 GitHub Actions — secrets dan variables repo
 
@@ -853,12 +886,14 @@ Catatan template:
 5. **Google OAuth client belum dibuat.** `GOOGLE_CLIENT_ID` dan
    `GOOGLE_CLIENT_SECRET` membutuhkan OAuth client di Google Cloud
    Console (gratis, tanpa kartu) dengan redirect URI ke
-   `<api>/auth/google/callback`. Pembuatan client adalah prasyarat
+   `<api>/api/auth/google/callback`. Pembuatan client adalah prasyarat
    bagian 1.3–1.4; bila belum ada, Worker tetap bisa di-deploy, tetapi
    login Google belum bisa diuji sampai client dibuat dan secret
    diatur.
-6. **Wrangler belum teruji dari VM ini.** Semua langkah utama memakai
-   REST API via `cfw_t.py`. Perintah wrangler hanya alternatif.
+6. **Wrangler lokal teruji dari VM ini** (migrasi `--local` dan
+   `wrangler dev`, Wave 4). Deploy script Worker tetap memakai REST
+   API via `cfw_t.py` (bagian 1.3); migrasi D1 remote memakai
+   `wrangler d1 migrations apply --remote` (bagian 1.1 langkah 3).
 7. **Kuota D1 free tier** (terverifikasi 17 Nov 2026): 5 juta baris
    dibaca/hari, 100 ribu baris ditulis/hari, 500 MB per database.
    Bila kuota habis, query galat sampai reset 00:00 UTC — tanpa
@@ -868,6 +903,23 @@ Catatan template:
    ulang batas ini.
 
 ## Changelog dokumen
+
+### 18 November 2026 — perbaikan keamanan Wave 4 (Tim Blue)
+
+- §1.1 langkah 3: HAPUS cuplikan CREATE TABLE `users` manual (salah
+  total vs 0001) — migrasi dijalankan via
+  `wrangler d1 migrations apply --remote` (0001–0004, 11 tabel);
+  langkah 4 diperbarui ke 11 tabel.
+- §1.4 + §6.3: `SESSION_SECRET` DIHAPUS (tidak dipakai kode —
+  state OAuth adalah nilai acak di cookie HttpOnly, dibandingkan
+  waktu-konstan); diganti secret `PIN_PEPPER` (K-71) + larangan
+  rotasi setelah ada PIN tersimpan.
+- §6.2: tambah `GOOGLE_REDIRECT_URI`, `ALLOWED_ORIGIN`,
+  `FRONTEND_URL` (K-73) + catatan placeholder wajib diganti.
+- §4.2: tambah cek smoke R-02 (ubah PIN dari sesi terkunci).
+- §4.4 (baru): verifikasi CORS preflight + header keamanan +
+  runbook mempersempit `connect-src` Pages ke origin API persis;
+  "Kriteria lolos" menjadi §4.5.
 
 ### 17 November 2026 — versi awal
 

@@ -7,7 +7,17 @@
 //     jendela_mulai TEXT NOT NULL, kedaluwarsa_pada TEXT NOT NULL)
 // Satu baris per kunci = "cakupan:subjek:jendela". KV TIDAK dipakai
 // untuk rate limit: D1 memberi hitungan atomik per kunci lewat
-// INSERT ... ON CONFLICT DO UPDATE.
+// dua pernyataan yang masing-masing atomik — INSERT OR IGNORE
+// (membuat baris jendela bila belum ada) lalu UPDATE ...
+// SET jumlah = jumlah + 1 WHERE jumlah < batas. Keputusan
+// "diizinkan/ditolak" diambil database lewat meta.changes (1 =
+// diizinkan, 0 = batas tercapai), sehingga burst paralel tidak
+// dapat mengalahkan batas (R-03: implementasi baca-lalu-tulis
+// sebelumnya menghitung hanya 2 dari 20 permintaan paralel yang
+// diizinkan). Pola "upsert lalu baca kembali" TIDAK dipakai:
+// bacaan sesudah increment dapat melihat hitungan akhir dari
+// seluruh burst dan menolak semua permintaan (over-rejection,
+// terbukti oleh tes burst di bawah).
 //
 // Batas kontrak bagian 0.7:
 //   - tulis (POST/PATCH/PUT/DELETE): 60/menit per pengguna
@@ -15,11 +25,18 @@
 //   - ekspor akun: 5/hari per pengguna
 //   - mulai OAuth: 10/menit per IP
 // AI 20/hari dan kunci PIN 5x diatur modulnya sendiri
-// (ai/ratelimit.ts, auth/pin.ts) dan tidak lewat modul ini.
+// (ai/ratelimit.ts, auth/pin.ts) — keduanya memakai pola increment
+// atomik yang sama, dan kuota AI memakai tabel ini lewat
+// cekDanCatat (cadangan kuota).
 //
-// Semantik: cekDanCatat menaikkan hitungan HANYA bila masih di
-// bawah batas; permintaan yang ditolak tidak menambah hitungan.
+// Semantik: hanya permintaan yang diizinkan yang menambah hitungan
+// (UPDATE bersyarat tidak menyentuh baris bila batas tercapai).
 // Kode galat kanonis: 429 RATE_LIMITED (K-59) + header Retry-After.
+//
+// Pembersihan malas (R-15): setiap kunci baru yang dibuat memicu
+// satu penghapusan best-effort atas baris kedaluwarsa (maksimal 100
+// baris per pemicu). Kegagalan pembersihan tidak pernah
+// menggagalkan permintaan.
 //
 // Modul ini memakai antarmuka D1 minimal DbD1 (auth/session) agar
 // bisa dipakai router data (D1Database) maupun router auth (DbD1)
@@ -148,33 +165,98 @@ async function bacaJumlah(db: DbD1, kunci: string): Promise<number> {
 }
 
 /**
- * Memeriksa batas lalu mencatat satu pemakaian bila diizinkan.
- * Permintaan yang ditolak TIDAK menambah hitungan. Melempar bila
- * D1 gagal (pemanggil memutuskan: 503 untuk endpoint data,
- * fail-open dengan log untuk OAuth — lihat routes auth).
+ * Memeriksa batas dan mencatat satu pemakaian secara ATOMIK
+ * (R-03): (1) INSERT OR IGNORE membuat baris jendela bila belum
+ * ada (jumlah awal 0); (2) UPDATE bersyarat menaikkan hitungan
+ * hanya bila masih di bawah batas — database yang memutuskan
+ * lewat meta.changes, sehingga tepat `batas` permintaan paralel
+ * yang diizinkan dan tidak ada over-rejection; (3) SELECT membaca
+ * hitungan akhir untuk status. Permintaan yang ditolak TIDAK
+ * menambah hitungan. Melempar bila D1 gagal (pemanggil
+ * memutuskan: 503 untuk endpoint data, fail-open dengan log untuk
+ * OAuth — lihat routes auth).
  */
 export async function cekDanCatat(
   db: DbD1,
   jendela: Jendela,
   batas: number,
 ): Promise<StatusBatas> {
+  const siapkanBaris = async (): Promise<number> => {
+    const hasil = await db
+      .prepare(
+        `INSERT OR IGNORE INTO rate_limits (kunci, jumlah, jendela_mulai, kedaluwarsa_pada)
+         VALUES (?, 0, ?, ?)`,
+      )
+      .bind(jendela.kunci, jendela.mulai, jendela.kedaluwarsa)
+      .run();
+    const meta = hasil.meta as { changes?: number } | undefined;
+    return meta?.changes ?? 0;
+  };
+  let barisBaru: number;
+  try {
+    barisBaru = await siapkanBaris();
+  } catch (err) {
+    // Tabel belum ada (database lama tanpa migrasi 0004): buat lalu
+    // coba sekali lagi. Galat lain diteruskan ke pemanggil.
+    if (!pesanGalat(err).includes('no such table')) throw err;
+    await pastikanTabelRateLimit(db);
+    barisBaru = await siapkanBaris();
+  }
+  const hasilNaik = await db
+    .prepare(
+      'UPDATE rate_limits SET jumlah = jumlah + 1 WHERE kunci = ? AND jumlah < ?',
+    )
+    .bind(jendela.kunci, batas)
+    .run();
+  const metaNaik = hasilNaik.meta as { changes?: number } | undefined;
+  const diizinkan = (metaNaik?.changes ?? 0) === 1;
   const terpakai = await bacaJumlah(db, jendela.kunci);
-  if (terpakai >= batas) {
+  if (barisBaru === 1) {
+    // Kunci baru dibuat: pemicu pembersihan malas baris kedaluwarsa.
+    await bersihkanBatasKedaluwarsa(db, new Date());
+  }
+  if (!diizinkan) {
     return { diizinkan: false, terpakai, batas, sisa: 0 };
   }
-  const jumlahBaru = terpakai + 1;
-  await db
-    .prepare(
-      `INSERT INTO rate_limits (kunci, jumlah, jendela_mulai, kedaluwarsa_pada)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(kunci) DO UPDATE SET
-         jumlah = excluded.jumlah,
-         jendela_mulai = excluded.jendela_mulai,
-         kedaluwarsa_pada = excluded.kedaluwarsa_pada`,
-    )
-    .bind(jendela.kunci, jumlahBaru, jendela.mulai, jendela.kedaluwarsa)
-    .run();
-  return { diizinkan: true, terpakai: jumlahBaru, batas, sisa: batas - jumlahBaru };
+  return { diizinkan: true, terpakai, batas, sisa: batas - terpakai };
+}
+
+/** Jumlah maksimal baris kedaluwarsa yang dibersihkan per pemicu. */
+export const BATAS_BERSIH_KEDALUWARSA = 100;
+
+/**
+ * Menghapus baris rate_limits yang sudah kedaluwarsa (maksimal
+ * BATAS_BERSIH_KEDALUWARSA baris). Best-effort: kegagalan apa pun
+ * ditelan — pembersihan tidak boleh menggagalkan permintaan.
+ * Dipanggil dari cekDanCatat saat kunci baru dibuat (R-15).
+ */
+export async function bersihkanBatasKedaluwarsa(
+  db: DbD1,
+  sekarang: Date = new Date(),
+): Promise<number> {
+  try {
+    const kedaluwarsa = await db
+      .prepare(
+        'SELECT kunci FROM rate_limits WHERE kedaluwarsa_pada < ? LIMIT ?',
+      )
+      .bind(sekarang.toISOString(), BATAS_BERSIH_KEDALUWARSA)
+      .all<{ kunci: string }>();
+    const daftar = (kedaluwarsa.results ?? [])
+      .map((baris) => baris.kunci)
+      .filter((kunci): kunci is string => typeof kunci === 'string');
+    if (daftar.length === 0) {
+      return 0;
+    }
+    const placeholder = daftar.map(() => '?').join(', ');
+    const hasil = await db
+      .prepare(`DELETE FROM rate_limits WHERE kunci IN (${placeholder})`)
+      .bind(...daftar)
+      .run();
+    const meta = hasil.meta as { changes?: number } | undefined;
+    return meta?.changes ?? daftar.length;
+  } catch {
+    return 0;
+  }
 }
 
 /** Lingkungan minimal middleware batas laju: D1 + variabel auth. */

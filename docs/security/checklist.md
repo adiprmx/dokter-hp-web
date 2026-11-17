@@ -26,18 +26,18 @@ Legenda status: ☐ belum dikerjakan · ◐ sedang dikerjakan ·
 | 1.5 | `google_sub` hanya diambil dari token ID yang sudah diverifikasi Google di server; tidak pernah dari input client | ☐ | |
 | 1.6 | Kolom `google_sub` UNIQUE di D1; percobaan membuat pengguna duplikat ditolak dengan aman | ☐ | |
 | 1.7 | Redirect setelah login hanya ke path internal yang diizinkan (`/dashboard`); tidak ada parameter `next` bebas | ☐ | |
-| 1.8 | Rate limit 10/menit per IP pada `GET /auth/google` | ☐ | |
+| 1.8 | Rate limit 10/menit per IP pada `GET /api/auth/google` | ☐ | |
 | 1.9 | Client secret Google hanya sebagai secret Worker; tidak ada di repo, log, atau bundle frontend | ☐ | |
-| 1.10 | Pengguna baru dan pengguna lama ditangani dengan benar (cari berdasar `google_sub`, buat bila belum ada; profil dibuat bersamaan) | ☐ | |
+| 1.10 | Pengguna baru dan pengguna lama ditangani dengan benar (cari berdasar `email` + `provider='google'`, buat bila belum ada; profil dibuat bersamaan) | ☐ | |
 
 ## 2. PIN
 
 | # | Item | Status | Bukti |
 |---|---|---|---|
-| 2.1 | PIN disimpan hanya sebagai hash SHA-256 + salt unik per pengguna; PIN asli tidak pernah disimpan | ☐ | |
+| 2.1 | PIN disimpan hanya sebagai HMAC-SHA256 dengan pepper secret `PIN_PEPPER` + salt unik per pengguna (K-71); PIN asli tidak pernah disimpan | ☐ | |
 | 2.2 | Salt dibuat acak per pengguna (minimal 16 byte dari `crypto.getRandomValues`) | ☐ | |
 | 2.3 | PIN divalidasi: 4–8 digit angka saja; pola lemah ditolak (semua digit sama, urutan naik/turun) | ☐ | |
-| 2.4 | Setelah 5 kali PIN salah berturut-turut, masukan dikunci 30 detik (`pin_terkunci_sampai`) | ☐ | |
+| 2.4 | Setelah 5 kali PIN salah berturut-turut, masukan dikunci 30 detik (`terkunci_sampai` di tabel `pin_attempts`) | ☐ | |
 | 2.5 | Penghitung percobaan salah disimpan per pengguna di D1, bukan per sesi; sesi baru tidak me-reset penghitung | ☐ | |
 | 2.6 | Percobaan selama terkunci ditolak tanpa memeriksa PIN (tidak membocorkan apakah PIN benar) | ☐ | |
 | 2.7 | Penghitung di-reset ke 0 setelah verifikasi PIN berhasil | ☐ | |
@@ -74,11 +74,11 @@ Legenda status: ☐ belum dikerjakan · ◐ sedang dikerjakan ·
 | 4.1 | `user_id` selalu diambil dari sesi terverifikasi; tidak ada endpoint yang menerima `user_id` dari client | ☐ | |
 | 4.2 | Setiap query baca data memfilter `user_id` dari sesi (health_checks, wifi_reports, ai_diagnoses, sessions) | ☐ | |
 | 4.3 | Setiap query tulis/ubah/hapus memverifikasi kepemilikan sebelum bertindak (baca dulu dengan filter `user_id`, atau UPDATE/DELETE dengan `WHERE id = ? AND user_id = ?` lalu periksa jumlah baris yang berubah) | ☐ | |
-| 4.4 | `GET /health-checks/:id`, `/wifi-reports/:id` mengembalikan 404 yang sama untuk "tidak ada" dan "bukan milik Anda" | ☐ | |
-| 4.5 | `POST /wifi-reports/:id/samples` memverifikasi laporan milik pengguna sebelum menyimpan sampel | ☐ | |
-| 4.6 | `POST /ai/diagnose` memverifikasi `health_check_id` (bila diisi) milik pengguna sebelum dipakai sebagai konteks | ☐ | |
+| 4.4 | `GET /api/health-checks/:id`, `/api/wifi-reports/:id` mengembalikan 404 yang sama untuk "tidak ada" dan "bukan milik Anda" | ☐ | |
+| 4.5 | `POST /api/wifi-reports/:id/samples` memverifikasi laporan milik pengguna sebelum menyimpan sampel | ☐ | |
+| 4.6 | `POST /api/ai/diagnose` memverifikasi `health_check_id` (bila diisi) milik pengguna sebelum dipakai sebagai konteks | ☐ | |
 | 4.7 | Konteks AI hanya dirakit dari data milik pengguna yang masuk | ☐ | |
-| 4.8 | `DELETE /account/sessions/:id` hanya menghapus sesi milik pengguna yang masuk | ☐ | |
+| 4.8 | `DELETE /api/account/sessions/:id` hanya menghapus sesi milik pengguna yang masuk | ☐ | |
 | 4.9 | ID dibuat dengan `crypto.randomUUID()` (UUID v4 acak, tidak berurutan) | ☐ | |
 | 4.10 | Uji IDOR eksplisit lolos untuk setiap endpoint berparameter `:id` (lihat `red-team-plan.md` skenario R1) | ☐ | |
 | 4.11 | Semua query baca memfilter `deleted_at IS NULL` (data soft-delete tidak bisa dibaca lewat ID langsung) | ☐ | |
@@ -88,11 +88,11 @@ Legenda status: ☐ belum dikerjakan · ◐ sedang dikerjakan ·
 
 | # | Item | Status | Bukti |
 |---|---|---|---|
-| 5.1 | Semua payload divalidasi di Worker dengan zod (tipe, panjang maksimum, rentang) | ☐ | |
+| 5.1 | Semua payload divalidasi di Worker dengan validator tulisan tangan (tipe, panjang maksimum, rentang) | ☐ | |
 | 5.2 | Skor divalidasi 0–100 (juga ditegakkan CHECK di D1) | ☐ | |
 | 5.3 | `sumber` hanya `web` / `apk` / `manual` (juga CHECK di D1) | ☐ | |
 | 5.4 | `detik_ke` sampel 0–29; maksimal 30 sampel per laporan | ☐ | |
-| 5.5 | `limit` dan `offset` paginasi dibatasi (`limit` maksimum 100; nilai negatif atau bukan angka ditolak) | ☐ | |
+| 5.5 | `limit` dan `cursor` paginasi dibatasi (`limit` maksimum 100; nilai negatif atau bukan angka ditolak; `cursor` yang tidak bisa didekode ditolak) | ☐ | |
 | 5.6 | Panjang maksimum diberlakukan untuk semua field teks (nama, SSID, DNS, rekomendasi, pertanyaan AI, ringkasan JSON) | ☐ | |
 | 5.7 | Batas ukuran body request diberlakukan di Worker | ☐ | |
 | 5.8 | `ringkasan` JSON divalidasi sebagai JSON yang sah sebelum disimpan | ☐ | |
@@ -112,9 +112,9 @@ Legenda status: ☐ belum dikerjakan · ◐ sedang dikerjakan ·
 
 | # | Item | Status | Bukti |
 |---|---|---|---|
-| 7.1 | `POST /ai/diagnose`: 20/hari per pengguna | ☐ | |
-| 7.2 | `POST /auth/pin/verify`: 5 percobaan lalu kunci 30 detik (lihat bagian 2) | ☐ | |
-| 7.3 | `GET /auth/google`: 10/menit per IP | ☐ | |
+| 7.1 | `POST /api/ai/diagnose`: 20/hari per pengguna | ☐ | |
+| 7.2 | `POST /api/auth/pin/verify`: 5 percobaan lalu kunci 30 detik (lihat bagian 2) | ☐ | |
+| 7.3 | `GET /api/auth/google`: 10/menit per IP | ☐ | |
 | 7.4 | Semua endpoint tulis: 60/menit per pengguna | ☐ | |
 | 7.5 | Respons saat kena batas: HTTP 429 dengan envelope galat standar dan pesan bahasa sehari-hari | ☐ | |
 | 7.6 | Rate limit ditegakkan di server (D1 atau fitur platform), bukan di frontend | ☐ | |
@@ -192,7 +192,7 @@ Legenda status: ☐ belum dikerjakan · ◐ sedang dikerjakan ·
 
 | # | Item | Status | Bukti |
 |---|---|---|---|
-| 14.1 | `DELETE /account` menghapus pengguna beserta seluruh data terkait (profil, sesi, health_checks, wifi_reports + sampel, ai_diagnoses) | ☐ | |
+| 14.1 | `DELETE /api/account` menghapus pengguna beserta seluruh data terkait (profil, sesi, health_checks, wifi_reports + sampel, ai_diagnoses) | ☐ | |
 | 14.2 | Penghapusan memakai foreign key cascade dengan `PRAGMA foreign_keys = ON`, ATAU penghapusan baris anak secara eksplisit di kode — dan dibuktikan dengan tes | ☐ | |
 | 14.3 | Setelah hapus akun, tidak ada baris yatim yang tersisa (diperiksa dengan query di semua tabel) | ☐ | |
 | 14.4 | Hapus akun butuh konfirmasi eksplisit (`konfirmasi: "HAPUS"`) dan sesi valid | ☐ | |

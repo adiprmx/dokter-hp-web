@@ -14,8 +14,12 @@
 // - Token sesi mentah (32 byte acak) TIDAK PERNAH disimpan di D1.
 //   Yang disimpan hanya SHA-256 hex dari token.
 // - Token mentah hanya ada di cookie HttpOnly pengguna.
-// - Cookie: HttpOnly, Secure, SameSite=None, Path=/, Max-Age 30 hari.
+// - Cookie: __Host- prefix, HttpOnly, Secure, SameSite=None,
+//   Path=/, Max-Age 30 hari (prefix __Host- mensyaratkan Path=/
+//   + Secure + tanpa atribut Domain — ketiganya dipenuhi).
 // - Sesi kedaluwarsa 30 hari sejak dibuat.
+// - Maksimal 10 sesi aktif per pengguna (R-22); sesi terlama
+//   dicabut otomatis saat login baru melewati batas.
 //
 // Catatan SameSite (keputusan koordinator K-50): frontend (Cloudflare
 // Pages) dan API (Cloudflare Workers) berada di domain registrable
@@ -52,11 +56,12 @@ export interface DbD1 {
 
 /**
  * Binding Worker yang dibutuhkan modul auth. Nilai-nilai ini berasal
- * dari secret Worker (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) dan
- * variabel Worker (GOOGLE_REDIRECT_URI, FRONTEND_URL) — tidak pernah
- * dari kode dan tidak pernah dari repo. Tim integrasi wajib
- * menambahkan keempat nama ini ke src/env.d.ts dan Bindings di
- * src/index.ts saat menyambung router auth.
+ * dari secret Worker (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+ * PIN_PEPPER) dan variabel Worker (GOOGLE_REDIRECT_URI,
+ * FRONTEND_URL) — tidak pernah dari kode dan tidak pernah dari
+ * repo. Tim integrasi wajib menambahkan nama-nama ini ke
+ * src/env.d.ts dan Bindings di src/index.ts saat menyambung
+ * router auth.
  */
 export interface EnvAuth {
   /** Binding D1 (database dokter-hp-db). */
@@ -69,6 +74,13 @@ export interface EnvAuth {
   GOOGLE_REDIRECT_URI: string;
   /** Asal frontend (misalnya https://dokter-hp.pages.dev). */
   FRONTEND_URL: string;
+  /**
+   * Pepper server untuk hash PIN (secret Worker PIN_PEPPER,
+   * K-71). WAJIB diatur di produksi; operasi PIN gagal tertutup
+   * (500) bila tidak diatur. Pengembangan lokal memakai nilai
+   * dummy lewat .dev.vars; tes menginjeksi pepper uji.
+   */
+  PIN_PEPPER?: string;
 }
 
 /** Baris tabel users (sesuai migrasi 0001_init.sql). */
@@ -93,11 +105,17 @@ export interface BarisSesi {
   ip_terakhir: string | null;
 }
 
-/** Nama cookie sesi. */
-export const NAMA_COOKIE_SESI = 'dokter_hp_session';
+/** Nama cookie sesi (prefix __Host-, R-18). */
+export const NAMA_COOKIE_SESI = '__Host-dokter_hp_session';
 
 /** Masa berlaku sesi dalam detik (30 hari). */
 export const MASA_BERLAKU_SESI_DETIK = 30 * 24 * 60 * 60;
+
+/**
+ * Jumlah maksimal sesi aktif per pengguna (R-22). Saat login baru
+ * melewati batas, sesi terlama dicabut otomatis di buatSesi.
+ */
+export const BATAS_SESI_PER_PENGGUNA = 10;
 
 /** Panjang token sesi mentah dalam byte. */
 export const PANJANG_TOKEN_BYTE = 32;
@@ -142,6 +160,44 @@ export async function hashSha256Base64Url(teks: string): Promise<string> {
   const data = new TextEncoder().encode(teks);
   const hasil = await crypto.subtle.digest('SHA-256', data);
   return bytesKeBase64Url(new Uint8Array(hasil));
+}
+
+/**
+ * HMAC-SHA256 dari teks UTF-8 dengan kunci rahasia, dikembalikan
+ * sebagai hex huruf kecil. Dipakai hash PIN ber-pepper (K-71):
+ * kunci adalah PIN_PEPPER server, sehingga hash di D1 tidak dapat
+ * di-brute-force hanya dari bocoran database.
+ */
+export async function hmacSha256Hex(kunci: string, teks: string): Promise<string> {
+  const kunciCrypto = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(kunci),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const hasil = await crypto.subtle.sign(
+    'HMAC',
+    kunciCrypto,
+    new TextEncoder().encode(teks),
+  );
+  return bytesKeHex(new Uint8Array(hasil));
+}
+
+/**
+ * Membandingkan dua string tanpa berhenti di perbedaan pertama
+ * (mengurangi kebocoran waktu). Mengembalikan false bila panjang
+ * berbeda. Dipakai perbandingan hash PIN dan state OAuth (R-18).
+ */
+export function bandingkanStringAman(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  let beda = 0;
+  for (let i = 0; i < a.length; i++) {
+    beda |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return beda === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -272,7 +328,10 @@ export interface HasilBuatSesi {
  * Membuat sesi baru: token acak dibuat, hash-nya disimpan di D1,
  * token mentah dikembalikan kepada pemanggil untuk dipasang sebagai
  * cookie. Token mentah tidak pernah disimpan di mana pun selain
- * cookie pengguna.
+ * cookie pengguna. Setelah menyimpan, sesi terlama pengguna
+ * dicabut bila jumlah sesi melewati BATAS_SESI_PER_PENGGUNA
+ * (R-22); kegagalan pencabutan tidak menggagalkan pembuatan sesi
+ * (best-effort, dicatat ke log).
  */
 export async function buatSesi(db: DbD1, opsi: OpsiBuatSesi): Promise<HasilBuatSesi> {
   const sekarang = opsi.sekarang ?? new Date();
@@ -291,6 +350,18 @@ export async function buatSesi(db: DbD1, opsi: OpsiBuatSesi): Promise<HasilBuatS
     )
     .bind(id, opsi.idPengguna, tokenHash, kedaluwarsaIso, waktu, userAgent, ipTerakhir)
     .run();
+  try {
+    await db
+      .prepare(
+        'DELETE FROM sessions WHERE user_id = ? AND id NOT IN (' +
+          'SELECT id FROM sessions WHERE user_id = ? ' +
+          'ORDER BY dibuat_pada DESC, id DESC LIMIT ?)',
+      )
+      .bind(opsi.idPengguna, opsi.idPengguna, BATAS_SESI_PER_PENGGUNA)
+      .run();
+  } catch (err) {
+    console.warn('[session] Pencabutan sesi terlama gagal:', err);
+  }
   const sesi: BarisSesi = {
     id,
     user_id: opsi.idPengguna,

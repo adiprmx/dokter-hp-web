@@ -4,6 +4,7 @@
 // dengan awalan /api (keputusan koordinator K-07), sesuai implementasi
 // Worker di apps/api/src/auth/routes.ts:
 //   GET  /api/auth/google       — mulai masuk Google (navigasi browser)
+//   GET  /api/auth/status       — status ketersediaan login Google (K-89)
 //   GET  /api/auth/me           — info pengguna + status PIN/sesi
 //   POST /api/auth/pin/set      — atur/ubah PIN
 //   POST /api/auth/pin/verify   — verifikasi PIN (buka sesi)
@@ -13,7 +14,7 @@
 // menyimpan token di localStorage atau sessionStorage. Semua panggilan
 // API memakai lib/api.ts (credentials: "include" + ApiError bertipe).
 
-import { basisApi } from "./api";
+import { basisApi, panggilApi } from "./api";
 
 /** Panjang PIN minimum dan maksimum (digit), sesuai kontrak API. */
 export const PIN_MIN_DIGIT = 4;
@@ -30,6 +31,13 @@ const SISA_DETIK_MAKSIMUM = 3600;
 
 /** Pesan validasi format PIN (docs/copy.md bagian 3 dan 12). */
 export const PESAN_PIN_TIDAK_VALID = "PIN harus 4 sampai 8 angka.";
+
+/** Pesan saat PIN baru terlalu mudah ditebak (R-11, K-70d). */
+export const PESAN_PIN_LEMAH =
+  "PIN terlalu mudah ditebak. Pilih kombinasi yang tidak berurutan dan tidak semua sama.";
+
+/** Saran panjang PIN yang lebih aman (ditampilkan bersama pesan PIN lemah). */
+export const SARAN_PIN_KUAT = "Sebaiknya pakai 6 sampai 8 digit yang acak.";
 
 /** Pesan galat umum (docs/copy.md bagian 0). */
 export const PESAN_GALAT_UMUM = "Terjadi kesalahan. Coba lagi.";
@@ -52,6 +60,35 @@ export function validasiFormatPin(pin: unknown): pin is string {
 /** Pesan validasi untuk PIN, atau null bila formatnya sudah benar. */
 export function pesanValidasiPin(pin: string): string | null {
   return validasiFormatPin(pin) ? null : PESAN_PIN_TIDAK_VALID;
+}
+
+/**
+ * Memeriksa apakah PIN lemah dan mudah ditebak (R-11, K-70d):
+ * semua digit sama (0000, 9999) atau berurutan naik/turun ketat
+ * (1234, 4321). Cermin fungsi apakahPinLemah di Worker — server
+ * tetap memvalidasi ulang, cek ini hanya untuk umpan balik cepat.
+ */
+export function apakahPinLemah(pin: unknown): boolean {
+  if (!validasiFormatPin(pin)) return true;
+  const digit = pin.split("").map((d) => Number.parseInt(d, 10));
+  if (digit.every((d) => d === digit[0])) return true;
+  let naik = true;
+  let turun = true;
+  for (let i = 1; i < digit.length; i++) {
+    if (digit[i] !== digit[i - 1] + 1) naik = false;
+    if (digit[i] !== digit[i - 1] - 1) turun = false;
+  }
+  return naik || turun;
+}
+
+/**
+ * Pesan validasi untuk PIN BARU: format dulu, lalu kekuatan.
+ * Mengembalikan null bila PIN bisa dipakai.
+ */
+export function pesanValidasiPinBaru(pin: string): string | null {
+  const format = pesanValidasiPin(pin);
+  if (format) return format;
+  return apakahPinLemah(pin) ? PESAN_PIN_LEMAH : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +217,9 @@ export function pesanGalatMasuk(nilai: string | null): string | null {
   if (nilai === "server_sibuk") {
     return "Server sedang sibuk, coba lagi nanti.";
   }
+  if (nilai === "oauth_belum_disiapkan") {
+    return "Masuk dengan Google belum disiapkan untuk situs ini.";
+  }
   return "Masuk dengan Google gagal. Coba lagi.";
 }
 
@@ -189,14 +229,20 @@ export function pesanGalatMasuk(nilai: string | null): string | null {
 
 /**
  * Memvalidasi tujuan redirect setelah masuk: hanya path relatif dalam
- * aplikasi yang diawali "/" (dan bukan "//"). Nilai lain diganti
- * "/dashboard", sesuai kontrak API 1.1.
+ * aplikasi yang diawali "/" (dan bukan "//"), tanpa backslash dan
+ * tanpa karakter kontrol (R-06: browser menormalkan "/\jahat.test"
+ * menjadi "//jahat.test"). Nilai lain diganti "/dashboard", sesuai
+ * kontrak API 1.1. Server memvalidasi ulang dengan aturan yang sama
+ * ditambah cek origin FRONTEND_URL.
  */
 export function validasiRedirect(tujuan: string | null | undefined): string {
   if (
     typeof tujuan === "string" &&
+    tujuan.length <= 500 &&
     tujuan.startsWith("/") &&
-    !tujuan.startsWith("//")
+    !tujuan.startsWith("//") &&
+    !tujuan.includes("\\") &&
+    !/[\u0000-\u001F\u007F]/.test(tujuan)
   ) {
     return tujuan;
   }
@@ -210,6 +256,26 @@ export function validasiRedirect(tujuan: string | null | undefined): string {
 export function buatUrlMasukGoogle(redirect?: string | null): string {
   const tujuan = encodeURIComponent(validasiRedirect(redirect));
   return `${basisApi()}/api/auth/google?redirect=${tujuan}`;
+}
+
+/**
+ * Status ketersediaan login Google dari GET /api/auth/status
+ * (K-89, endpoint #31). Hanya boolean — server tidak pernah
+ * mengirim nilai secret apa pun.
+ */
+export interface StatusAuth {
+  google_tersedia: boolean;
+}
+
+/**
+ * Mengambil status ketersediaan login Google. Melempar ApiError
+ * bila API tidak terjangkau — pemanggil (MasukPage) memperlakukan
+ * kegagalan sebagai "tidak diketahui" dan menampilkan tombol
+ * seperti biasa (fail-open; jaring pengaman backend di
+ * /api/auth/google yang menangani bila OAuth memang belum siap).
+ */
+export async function ambilStatusAuth(): Promise<StatusAuth> {
+  return panggilApi<StatusAuth>("/api/auth/status");
 }
 
 /** Informasi pengguna dari GET /api/auth/me (kontrak API 1.4). */

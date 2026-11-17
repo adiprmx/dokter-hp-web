@@ -236,7 +236,7 @@ export default function PrivasiPage() {
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-zinc-300">
             Dokter HP memakai cookie hanya untuk keperluan login, bukan untuk
-            pelacakan: cookie sesi (dokter_hp_session, 30 hari) agar pengguna
+            pelacakan: cookie sesi (__Host-dokter_hp_session, 30 hari) agar pengguna
             tetap masuk, dan cookie sementara saat masuk Google (penanda
             keamanan selama proses masuk, berakhir setelah proses selesai).
             Cookie sesi bersifat HttpOnly (tidak bisa dibaca skrip di

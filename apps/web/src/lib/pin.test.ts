@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  PESAN_PIN_LEMAH,
   PESAN_PIN_TIDAK_VALID,
   PIN_KUNCI_DETIK,
+  apakahPinLemah,
   buatUrlMasukGoogle,
   kodeGalatApi,
   parseResponsKunciPin,
@@ -9,6 +11,7 @@ import {
   pesanGalatApi,
   pesanGalatMasuk,
   pesanValidasiPin,
+  pesanValidasiPinBaru,
   validasiFormatPin,
   validasiRedirect,
 } from "./pin";
@@ -63,6 +66,27 @@ describe("pesanValidasiPin", () => {
     expect(pesanValidasiPin("123")).toBe(PESAN_PIN_TIDAK_VALID);
     expect(pesanValidasiPin("abcd")).toBe(PESAN_PIN_TIDAK_VALID);
     expect(pesanValidasiPin("")).toBe(PESAN_PIN_TIDAK_VALID);
+  });
+});
+
+describe("apakahPinLemah dan pesanValidasiPinBaru (R-11)", () => {
+  it("menolak digit sama dan urutan ketat", () => {
+    for (const lemah of ["0000", "9999", "1234", "4321", "012345"]) {
+      expect(apakahPinLemah(lemah)).toBe(true);
+      expect(pesanValidasiPinBaru(lemah)).toBe(PESAN_PIN_LEMAH);
+    }
+  });
+
+  it("menerima PIN acak yang tidak berpola", () => {
+    for (const kuat of ["1357", "2846", "7391", "1029"]) {
+      expect(apakahPinLemah(kuat)).toBe(false);
+      expect(pesanValidasiPinBaru(kuat)).toBeNull();
+    }
+  });
+
+  it("format tidak valid didahulukan atas pesan lemah", () => {
+    expect(pesanValidasiPinBaru("12")).toBe(PESAN_PIN_TIDAK_VALID);
+    expect(pesanValidasiPinBaru("abcd")).toBe(PESAN_PIN_TIDAK_VALID);
   });
 });
 
@@ -215,6 +239,9 @@ describe("pesanGalatMasuk", () => {
     expect(pesanGalatMasuk("server_sibuk")).toBe(
       "Server sedang sibuk, coba lagi nanti.",
     );
+    expect(pesanGalatMasuk("oauth_belum_disiapkan")).toBe(
+      "Masuk dengan Google belum disiapkan untuk situs ini.",
+    );
   });
 
   it("nilai yang tidak dikenal diperlakukan sebagai oauth_gagal", () => {
@@ -240,6 +267,16 @@ describe("validasiRedirect", () => {
     expect(validasiRedirect("https://jahat.example.com")).toBe("/dashboard");
     expect(validasiRedirect("//jahat.example.com")).toBe("/dashboard");
     expect(validasiRedirect("dashboard")).toBe("/dashboard");
+  });
+
+  it("menolak backslash dan karakter kontrol (R-06)", () => {
+    expect(validasiRedirect("/\\jahat.example.com")).toBe("/dashboard");
+    expect(validasiRedirect("/wifi\\@jahat.example.com")).toBe("/dashboard");
+    expect(validasiRedirect("/dashboard\nhttps://jahat.example.com")).toBe("/dashboard");
+  });
+
+  it("menolak nilai yang terlalu panjang", () => {
+    expect(validasiRedirect(`/${"a".repeat(600)}`)).toBe("/dashboard");
   });
 
   it("memakai /dashboard bila tidak ada tujuan", () => {

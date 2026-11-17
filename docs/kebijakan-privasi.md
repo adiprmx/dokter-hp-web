@@ -170,12 +170,13 @@ pelacakan:
 
 | Cookie | Fungsi | Masa berlaku |
 |---|---|---|
-| `dokter_hp_session` | Menyimpan token sesi agar pengguna tetap masuk | 30 hari |
+| `__Host-dokter_hp_session` | Menyimpan token sesi agar pengguna tetap masuk | 30 hari |
 | Cookie sementara saat masuk Google | Menyimpan penanda keamanan (state dan PKCE) selama proses masuk | Berakhir setelah proses masuk selesai |
 
 Cookie sesi bersifat HttpOnly (tidak bisa dibaca oleh skrip di
-halaman web), Secure (hanya dikirim lewat HTTPS), dan SameSite=Lax
-(membatasi pengiriman lintas situs). Dokter HP tidak memakai cookie
+halaman web), Secure (hanya dikirim lewat HTTPS), dan SameSite=None
+(diperlukan karena halaman web dan server API berada di alamat
+yang berbeda). Dokter HP tidak memakai cookie
 iklan, cookie pelacak, atau cookie pihak ketiga.
 
 Bila pengguna memblokir cookie di browser, fitur masuk dan

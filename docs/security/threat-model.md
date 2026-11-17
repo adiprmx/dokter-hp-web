@@ -59,7 +59,7 @@ ancaman Rendah dicatat dan dipantau.
 | Penyerang | Kemampuan | Motivasi | Contoh |
 |---|---|---|---|
 | P1 — Pengguna biasa yang penasaran | Browser, curl, membaca respons API; tanpa akses server | Melihat data pengguna lain, melewati batas pemakaian | Mengubah `:id` di URL untuk membaca laporan orang lain |
-| P2 — Penyerang eksternal tanpa akun | Internet, alat otomatis (skrip, bot), tanpa kredensial valid | Mengambil alih akun, menguras kuota, menjatuhkan layanan | Brute force PIN, banjir request ke `/ai/diagnose` |
+| P2 — Penyerang eksternal tanpa akun | Internet, alat otomatis (skrip, bot), tanpa kredensial valid | Mengambil alih akun, menguras kuota, menjatuhkan layanan | Brute force PIN, banjir request ke `/api/ai/diagnose` |
 | P3 — Penyerang dengan satu akun valid | Akun sendiri yang sah + alat teknis | Mencuri data pengguna lain, menyalahgunakan AI | IDOR, enumerasi ID, penyalahgunaan rate limit |
 | P4 — Penyusup lewat browser korban | Bisa membuat korban mengunjungi situs jahat | Mencuri sesi, memalsukan aksi atas nama korban | XSS tersimpan, CSRF, phishing halaman login palsu |
 | P5 — Pihak dalam / kebocoran operasional | Akses tidak sengaja ke repo, log, atau dashboard | Membocorkan secret atau data | Secret ter-commit ke repo, token tercetak di log |
@@ -78,14 +78,14 @@ tidak menyimpan data yang tidak perlu).
 
 | Permukaan | Keterangan |
 |---|---|
-| Endpoint API publik | `/auth/google`, `/auth/google/callback`, `/health`, `/ping` |
-| Endpoint API terautentikasi | Semua `/health-checks/*`, `/wifi-reports/*`, `/ai/*`, `/account/*`, `/auth/pin/*`, `/auth/me`, `/auth/logout` |
-| Cookie sesi | `dokter_hp_session` (HttpOnly, Secure, SameSite=Lax, 30 hari) |
+| Endpoint API publik | `/api/auth/google`, `/api/auth/google/callback`, `/api/health`, `/api/ping` |
+| Endpoint API terautentikasi | Semua `/api/health-checks/*`, `/api/wifi-reports/*`, `/api/ai/*`, `/api/account/*`, `/api/auth/pin/*`, `/api/auth/me`, `/api/auth/logout` |
+| Cookie sesi | `__Host-dokter_hp_session` (HttpOnly, Secure, SameSite=None, Path=/, 30 hari) |
 | Frontend statis | Build Vite di Pages + Vercel; file `speedtest-1mb.bin` |
 | Alur OAuth | Redirect ke Google dan callback; parameter `state` + PKCE |
 | Input pengguna | PIN, nama tampilan, SSID, DNS, rekomendasi, pertanyaan AI, ringkasan JSON |
 | Integrasi Gemini | Prompt yang dirakit Worker dari data pengguna + pertanyaan |
-| Rantai pasok | Dependensi npm (React, Hono, zod, jsPDF), GitHub Actions / integrasi deploy |
+| Rantai pasok | Dependensi npm (React, Hono, jsPDF), GitHub Actions / integrasi deploy |
 
 ---
 
@@ -108,15 +108,15 @@ tidak menyimpan data yang tidak perlu).
 | # | STRIDE | Ancaman | Dampak | Kemungkinan | Mitigasi |
 |---|---|---|---|---|---|
 | W1 | Spoofing | Token sesi palsu atau token pengguna lain dipakai untuk mengakses API | Tinggi | Sedang | Token acak 32 byte dari `crypto.getRandomValues`; verifikasi dengan hash SHA-256 + cek kedaluwarsa di setiap request; perbandingan hash waktu-konstan |
-| W2 | Spoofing | Header `user_id` atau field `user_id` di body dipakai untuk menyamar sebagai pengguna lain | Tinggi | Tinggi | `user_id` SELALU diambil dari sesi terverifikasi; tidak ada endpoint yang menerima `user_id` dari client; validasi zod menolak field yang tidak dikenal |
-| W3 | Tampering | SQL injection lewat input (SSID, nama, pertanyaan, ID) | Kritis | Sedang | Prepared statement dengan parameter terikat di semua query; tidak ada perakitan string SQL dari input; validasi zod sebelum query |
+| W2 | Spoofing | Header `user_id` atau field `user_id` di body dipakai untuk menyamar sebagai pengguna lain | Tinggi | Tinggi | `user_id` SELALU diambil dari sesi terverifikasi; tidak ada endpoint yang menerima `user_id` dari client; validator tulisan tangan menolak field yang tidak dikenal |
+| W3 | Tampering | SQL injection lewat input (SSID, nama, pertanyaan, ID) | Kritis | Sedang | Prepared statement dengan parameter terikat di semua query; tidak ada perakitan string SQL dari input; validasi tulisan tangan sebelum query |
 | W4 | Tampering | IDOR: pengguna A membaca/mengubah/menghapus data pengguna B dengan menebak `:id` | Tinggi | Tinggi | Setiap query data memfilter `user_id` dari sesi; pengecekan kepemilikan sebelum baca/tulis/hapus; ID acak UUID v4 (tidak berurutan, tidak bisa ditebak) |
-| W5 | Tampering | Mass assignment: client mengirim field yang tidak seharusnya bisa diubah (misalnya `user_id`, `dibuat_pada`, `deleted_at`) | Tinggi | Sedang | Skema zod memakai daftar field yang diizinkan (allowlist); field di luar skema ditolak atau dibuang; kolom sensitif tidak pernah diambil dari body |
+| W5 | Tampering | Mass assignment: client mengirim field yang tidak seharusnya bisa diubah (misalnya `user_id`, `dibuat_pada`, `deleted_at`) | Tinggi | Sedang | Validator tulisan tangan memakai daftar field yang diizinkan (allowlist); field di luar skema ditolak atau dibuang; kolom sensitif tidak pernah diambil dari body |
 | W6 | Tampering | Manipulasi skor/ringkasan: client mengirim skor palsu 100 agar riwayat terlihat bagus | Rendah | Tinggi | Skor dari client diterima sebagai data yang dilaporkan pengguna, bukan hasil ukur server; sumber data dicatat (`sumber`); skor tidak dipakai untuk keputusan yang merugikan pihak lain |
 | W7 | Repudiation | Aksi berbahaya (hapus akun, hapus data) tidak bisa dilacak pelakunya | Sedang | Sedang | Log terstruktur (waktu, rute, status, `user_id` yang di-hash, durasi); hapus akun butuh konfirmasi eksplisit; log tidak berisi PII penuh |
 | W8 | Information Disclosure | Respons galat membocorkan struktur database, stack trace, atau keberadaan data orang lain | Sedang | Sedang | Envelope galat standar dengan pesan bahasa sehari-hari; 404 yang sama untuk "tidak ada" dan "bukan milik Anda" (tidak membocorkan keberadaan); stack trace tidak pernah ke client |
-| W9 | Information Disclosure | Enumerasi pengguna lewat respons berbeda (misalnya `/auth/me` atau pesan galat login yang berbeda) | Sedang | Sedang | Pesan galat seragam; tidak ada endpoint yang membedakan "email terdaftar" vs "tidak terdaftar"; OAuth Google tidak membocorkan status akun |
-| W10 | Denial of Service | Banjir request ke endpoint tulis menghabiskan kuota D1 (100 ribu tulis/hari) | Tinggi | Sedang | Rate limit 60/menit per pengguna untuk endpoint tulis; paginasi + `LIMIT` di semua daftar; endpoint `/ping` dan `/health` tidak menyentuh D1 |
+| W9 | Information Disclosure | Enumerasi pengguna lewat respons berbeda (misalnya `/api/auth/me` atau pesan galat login yang berbeda) | Sedang | Sedang | Pesan galat seragam; tidak ada endpoint yang membedakan "email terdaftar" vs "tidak terdaftar"; OAuth Google tidak membocorkan status akun |
+| W10 | Denial of Service | Banjir request ke endpoint tulis menghabiskan kuota D1 (100 ribu tulis/hari) | Tinggi | Sedang | Rate limit 60/menit per pengguna untuk endpoint tulis; paginasi + `LIMIT` di semua daftar; endpoint `/api/ping` dan `/api/health` tidak menyentuh D1 |
 | W11 | Denial of Service | Payload besar (ringkasan JSON raksasa, ribuan sampel) membebani D1 dan Worker | Sedang | Sedang | Batas ukuran body; validasi panjang maksimum per field; sampel tes bertahan dibatasi 30 per laporan; `limit` maksimum di query daftar |
 | W12 | Elevation of Privilege | Sesi yang masih "terkunci" (PIN belum diverifikasi) dipakai mengakses data | Tinggi | Sedang | Worker memeriksa flag `terkunci` di sesi pada semua endpoint kecuali endpoint PIN; frontend mengalihkan ke `/kunci`, tetapi penegakan ada di Worker |
 
@@ -148,13 +148,13 @@ tidak menyimpan data yang tidak perlu).
 | O3 | Spoofing | Redirect URI terbuka (open redirect) dipakai mengarahkan korban ke situs jahat setelah login | Sedang | Sedang | Redirect setelah login hanya ke path internal yang diizinkan (`/dashboard`); tidak ada parameter `next` bebas dari client |
 | O4 | Information Disclosure | Client secret Google bocor lewat repo, log, atau bundle | Tinggi | Rendah | Client secret hanya sebagai secret Worker; tidak pernah di repo, log, atau frontend |
 | O5 | Tampering | Akun diambil alih dengan mendaftarkan `google_sub` orang lain | Tinggi | Rendah | `google_sub` hanya diambil dari token ID yang sudah diverifikasi Google di server; tidak pernah dari input client; kolom `google_sub` UNIQUE |
-| O6 | Denial of Service | Banjir request ke `/auth/google` menghabiskan kuota atau memicu pembatasan Google | Sedang | Sedang | Rate limit 10/menit per IP pada `/auth/google` |
+| O6 | Denial of Service | Banjir request ke `/api/auth/google` menghabiskan kuota atau memicu pembatasan Google | Sedang | Sedang | Rate limit 10/menit per IP pada `/api/auth/google` |
 
 ### 5.6 PIN
 
 | # | STRIDE | Ancaman | Dampak | Kemungkinan | Mitigasi |
 |---|---|---|---|---|---|
-| P1 | Spoofing | Brute force PIN 4 digit (hanya 10.000 kombinasi) lewat `/auth/pin/verify` | Tinggi | Tinggi | Kunci 30 detik setelah 5 kali salah berturut-turut; penghitung di server (`pin_gagal_berturut`); penundaan tetap pada respons gagal agar tidak bisa dibedakan |
+| P1 | Spoofing | Brute force PIN 4 digit (hanya 10.000 kombinasi) lewat `/api/auth/pin/verify` | Tinggi | Tinggi | Kunci 30 detik setelah 5 kali salah berturut-turut; penghitung di server (`pin_gagal_berturut`); penundaan tetap pada respons gagal agar tidak bisa dibedakan |
 | P2 | Spoofing | PIN ditebak dari pola umum (1234, tanggal lahir, 0000) | Sedang | Tinggi | Tolak PIN yang terlalu mudah ditebak (semua digit sama, urutan naik/turun); anjurkan 6–8 digit di UI |
 | P3 | Tampering | Penghitung percobaan salah di-reset dengan membuat sesi baru atau memakai endpoint lain | Tinggi | Sedang | Penghitung disimpan per pengguna di D1 (`users.pin_gagal_berturut`), bukan per sesi; kunci berlaku untuk semua sesi pengguna itu |
 | P4 | Information Disclosure | Respons verifikasi PIN membocorkan apakah PIN diatur atau tidak, atau berapa sisa percobaan | Rendah | Sedang | Respons gagal seragam; sisa percobaan tidak diumumkan secara detail ke client yang tidak terautentikasi |
@@ -172,7 +172,7 @@ tidak menyimpan data yang tidak perlu).
 | S4 | Tampering | Token sesi tidak kedaluwarsa setelah keluar (logout tidak menghapus sesi di server) | Sedang | Sedang | Logout menghapus baris sesi di D1 dan cookie; "keluar dari sesi lain" menghapus semua sesi kecuali yang sedang dipakai |
 | S5 | Tampering | Sesi curian tetap berlaku selamanya karena masa berlaku 30 hari tanpa rotasi | Sedang | Sedang | Masa berlaku 30 hari; daftar sesi aktif bisa dilihat dan dicabut pengguna; pertimbangkan rotasi token di ronde berikutnya |
 | S6 | Information Disclosure | Token sesi bocor lewat log, URL, atau header Referer | Tinggi | Rendah | Token tidak pernah dicatat di log; tidak pernah di URL; `Referrer-Policy: strict-origin-when-cross-origin`; token hanya di cookie |
-| S7 | Denial of Service | Banjir pembuatan sesi memenuhi tabel `sessions` | Rendah | Sedang | Rate limit pada `/auth/google`; pembersihan sesi kedaluwarsa berkala |
+| S7 | Denial of Service | Banjir pembuatan sesi memenuhi tabel `sessions` | Rendah | Sedang | Rate limit pada `/api/auth/google`; pembersihan sesi kedaluwarsa berkala |
 
 ### 5.8 Diagnosis AI (Gemini)
 
@@ -182,7 +182,7 @@ tidak menyimpan data yang tidak perlu).
 | A2 | Information Disclosure | Prompt injection: pertanyaan pengguna menyuruh AI mengabaikan instruksi, membocorkan prompt sistem, atau mengarang jawaban | Sedang | Tinggi | Prompt sistem memisahkan instruksi dari input pengguna; jawaban dilabeli saran, bukan vonis; validasi panjang pertanyaan; jangan sertakan data pengguna lain dalam konteks |
 | A3 | Information Disclosure | Konteks AI berisi data pengguna lain karena query konteks tidak memfilter `user_id` | Tinggi | Sedang | Query konteks memakai `user_id` dari sesi; uji eksplisit bahwa konteks AI hanya berisi data pemilik sesi |
 | A4 | Tampering | Pengguna mengirim `health_check_id` milik orang lain agar konteks AI memakai data korban | Tinggi | Sedang | `health_check_id` diverifikasi kepemilikannya sebelum dipakai sebagai konteks; bila bukan milik pengguna, tolak atau abaikan |
-| A5 | Denial of Service | Penyalahgunaan kuota Gemini: satu pengguna menghabiskan kuota bersama | Tinggi | Tinggi | Rate limit 20/hari per pengguna pada `/ai/diagnose`; batas panjang pertanyaan; timeout panggilan Gemini |
+| A5 | Denial of Service | Penyalahgunaan kuota Gemini: satu pengguna menghabiskan kuota bersama | Tinggi | Tinggi | Rate limit 20/hari per pengguna pada `/api/ai/diagnose`; batas panjang pertanyaan; timeout panggilan Gemini |
 | A6 | Denial of Service | Gemini lambat/timeout membuat Worker menggantung dan request menumpuk | Sedang | Sedang | Timeout tegas pada panggilan Gemini; respons galat jujur bila AI tidak tersedia; jangan pernah mengarang jawaban saat AI mati |
 | A7 | Repudiation | Jawaban AI yang salah atau berbahaya tidak bisa dilacak | Rendah | Sedang | Pertanyaan + jawaban tersimpan di `ai_diagnoses` dengan `user_id` dan waktu; jawaban dilabeli saran |
 

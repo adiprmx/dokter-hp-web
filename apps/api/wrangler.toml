@@ -18,3 +18,16 @@ migrations_dir = "migrations"
 [[kv_namespaces]]
 binding = "KV"
 id = "00000000-0000-0000-0000-000000000000"
+
+# Variabel lingkungan NON-RAHASIA (K-73, K-08). Nilai di bawah ini
+# adalah PLACEHOLDER yang mengarah ke domain Pages produksi; tim
+# deploy WAJIB menggantinya dengan domain sebenarnya sebelum deploy
+# pertama. Secret (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+# GEMINI_API_KEY, PIN_PEPPER) TIDAK PERNAH ditulis di sini — atur
+# lewat `wrangler secret put`. GOOGLE_REDIRECT_URI bukan rahasia
+# (terlihat di URL OAuth) sehingga boleh di [vars] sebagai placeholder.
+[vars]
+ALLOWED_ORIGIN = "https://dokter-hp-web.pages.dev"
+FRONTEND_URL = "https://dokter-hp-web.pages.dev"
+GOOGLE_REDIRECT_URI = "https://dokter-hp-api.contoh.workers.dev/api/auth/google/callback"
+GEMINI_MODEL = "gemini-3.5-flash-lite"

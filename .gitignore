@@ -37,3 +37,7 @@ coverage/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Laporan tes lokal
+playwright-report/
+test-results/

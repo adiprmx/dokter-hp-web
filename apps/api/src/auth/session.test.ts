@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
   bacaNilaiCookie,
   bacaTokenDariCookie,
+  bandingkanStringAman,
+  BATAS_SESI_PER_PENGGUNA,
   buatCookie,
   buatCookieHapusSesi,
   buatCookieSesi,
@@ -19,6 +21,7 @@ import {
   hashSha256Base64Url,
   hashSha256Hex,
   hashToken,
+  hmacSha256Hex,
   MASA_BERLAKU_SESI_DETIK,
   NAMA_COOKIE_SESI,
   validasiSesi,
@@ -81,7 +84,32 @@ describe('buatTokenSesi dan hashToken', () => {
   });
 });
 
+describe('hmacSha256Hex dan bandingkanStringAman', () => {
+  it('HMAC deterministis, 64 hex, berbeda per kunci dan per teks', async () => {
+    const a = await hmacSha256Hex('kunci-uji', 'teks-uji');
+    const b = await hmacSha256Hex('kunci-uji', 'teks-uji');
+    const kunciLain = await hmacSha256Hex('kunci-lain', 'teks-uji');
+    const teksLain = await hmacSha256Hex('kunci-uji', 'teks-lain');
+    expect(a).toBe(b);
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(a).not.toBe(kunciLain);
+    expect(a).not.toBe(teksLain);
+  });
+
+  it('bandingkanStringAman true hanya untuk string yang sama persis', () => {
+    expect(bandingkanStringAman('abc', 'abc')).toBe(true);
+    expect(bandingkanStringAman('abc', 'abd')).toBe(false);
+    expect(bandingkanStringAman('abc', 'ab')).toBe(false);
+    expect(bandingkanStringAman('', '')).toBe(true);
+    expect(bandingkanStringAman('a', '')).toBe(false);
+  });
+});
+
 describe('cookie sesi', () => {
+  it('nama cookie memakai prefix __Host- (R-18)', () => {
+    expect(NAMA_COOKIE_SESI).toBe('__Host-dokter_hp_session');
+  });
+
   it('buatCookieSesi memakai atribut keamanan lengkap', () => {
     const cookie = buatCookieSesi('token-uji');
     expect(cookie).toContain(`${NAMA_COOKIE_SESI}=token-uji`);
@@ -90,6 +118,8 @@ describe('cookie sesi', () => {
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('Secure');
     expect(cookie).toContain('SameSite=None');
+    // Prefix __Host- melarang atribut Domain.
+    expect(cookie).not.toContain('Domain=');
   });
 
   it('masa berlaku sesi 30 hari', () => {
@@ -235,6 +265,53 @@ describe('buatSesi', () => {
     expect(nilai[6]).toBe('203.0.113.7');
     expect(hasil.sesi.user_agent).toBe('Mozilla/5.0 (Uji)');
     expect(hasil.sesi.ip_terakhir).toBe('203.0.113.7');
+  });
+
+  it('mencabut sesi terlama bila melewati batas 10 sesi per pengguna (R-22)', async () => {
+    const { db, sqlTerpanggil, nilaiTerikat } = buatMockDbDenganData({});
+    expect(BATAS_SESI_PER_PENGGUNA).toBe(10);
+    await buatSesi(db, { idPengguna: 'user-1', sekarang: new Date('2026-11-17T12:00:00.000Z') });
+    const idxHapus = sqlTerpanggil.findIndex((s) =>
+      s.startsWith('DELETE FROM sessions WHERE user_id = ? AND id NOT IN'),
+    );
+    expect(idxHapus).toBeGreaterThan(0);
+    expect(nilaiTerikat[idxHapus]).toEqual(['user-1', 'user-1', 10]);
+  });
+
+  it('pembuatan sesi tetap berhasil bila pencabutan sesi terlama gagal', async () => {
+    const { db } = buatMockDbDenganData({});
+    // Mock yang melempar pada DELETE pencabutan.
+    const dbGagal: DbD1 = {
+      prepare(sql: string): PernyataanD1 {
+        const pernyataan = db.prepare(sql);
+        const asliRun = pernyataan.run.bind(pernyataan);
+        const pembungkus: PernyataanD1 = {
+          bind(...nilai: unknown[]): PernyataanD1 {
+            pernyataan.bind(...nilai);
+            return pembungkus;
+          },
+          first<T>(): Promise<T | null> {
+            return pernyataan.first<T>();
+          },
+          all<T>(): Promise<{ results: T[]; success: boolean }> {
+            return pernyataan.all<T>();
+          },
+          async run(): Promise<{ success: boolean }> {
+            if (sql.startsWith('DELETE FROM sessions WHERE user_id')) {
+              throw new Error('D1 gagal (simulasi)');
+            }
+            return asliRun();
+          },
+        };
+        return pembungkus;
+      },
+    };
+    const hasil = await buatSesi(dbGagal, {
+      idPengguna: 'user-1',
+      sekarang: new Date('2026-11-17T12:00:00.000Z'),
+    });
+    expect(hasil.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(hasil.sesi.user_id).toBe('user-1');
   });
 });
 

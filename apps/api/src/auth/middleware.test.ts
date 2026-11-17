@@ -102,7 +102,7 @@ async function minta(
 ): Promise<{ status: number; body: any; res: Response }> {
   const headers: Record<string, string> = {};
   if (token !== undefined) {
-    headers.Cookie = `dokter_hp_session=${token}`;
+    headers.Cookie = `__Host-dokter_hp_session=${token}`;
   }
   const res = await app.request(`http://localhost${path}`, { headers }, {
     DB: db as unknown as D1Database & DbD1,

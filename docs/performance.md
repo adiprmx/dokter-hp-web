@@ -184,7 +184,7 @@ Komponen dan library berikut **dilarang** masuk chunk awal dan
 | `favicon.svg`, SVG statis lain | `Cache-Control: public, max-age=86400` | Jarang berubah; sehari cukup |
 | `speedtest-1mb.bin` | `Cache-Control: no-store` | Wajib diunduh ulang setiap tes agar hasil ukur nyata; cache akan memalsukan kecepatan |
 | `index.html` | `Cache-Control: no-cache` (revalidasi tiap kunjungan) | HTML menunjuk ke hash build terbaru; cache lama akan menunjuk chunk yang sudah tidak ada |
-| Respons API (`/health-checks`, `/wifi-reports`, dan lain-lain) | `Cache-Control: no-store` (data milik pengguna, bisa berubah) | Data pribadi tidak boleh di-cache di CDN bersama; cache di client diatur oleh aplikasi (Zustand) bila perlu |
+| Respons API (`/api/health-checks`, `/api/wifi-reports`, dan lain-lain) | `Cache-Control: no-store` (data milik pengguna, bisa berubah) | Data pribadi tidak boleh di-cache di CDN bersama; cache di client diatur oleh aplikasi (Zustand) bila perlu |
 
 - Header diatur di konfigurasi Pages (`_headers`) dan Vercel
   (`vercel.json`) dengan nilai yang sama di kedua mirror.
@@ -235,14 +235,14 @@ memakai indeks (bagian 4.3).
 
 | Jenis request | Anggaran query D1 | Catatan |
 |---|---|---|
-| Endpoint baca daftar (`GET /health-checks`, `GET /wifi-reports`, `GET /ai/diagnoses`) | 1-2 query | 1 query verifikasi sesi + 1 query daftar berindeks ber-`LIMIT` |
-| Endpoint baca satu item (`GET /health-checks/:id`, `GET /wifi-reports/:id`) | 1-3 query | 1 sesi + 1 item + 1 query sampel (hanya bila ada tes bertahan) |
-| Endpoint tulis satu baris (`POST /health-checks`, `POST /wifi-reports`, `POST /auth/pin/*`) | 1-3 query | 1 sesi + 1 tulis (+ 1 baca bila perlu validasi) |
-| `POST /wifi-reports/:id/samples` (30 sampel) | 1-2 query | 1 sesi + 1 batch insert (satu statement dengan banyak baris, atau satu transaksi) — dilarang 30 query terpisah |
-| `POST /ai/diagnose` | 1-4 query | 1 sesi + 1 rate limit + 2 baca konteks (pemeriksaan terakhir + laporan WiFi terakhir) + 1 simpan jawaban |
-| `GET /auth/me`, `GET /account/profile` | 1-2 query | 1 sesi + 1 profil (profil boleh digabung ke query sesi dengan JOIN bila memungkinkan) |
-| `DELETE /account` (hapus akun) | 1-3 query | 1 sesi + 1 hapus pengguna (cascade menghapus baris anak) + 1 hapus sesi lain; bila cascade tidak aktif, hapus anak secara eksplisit dalam satu transaksi |
-| `GET /health`, `GET /ping` | 0 query | Dilarang menyentuh D1 (lihat `ARCHITECTURE.md` bagian 3.6) |
+| Endpoint baca daftar (`GET /api/health-checks`, `GET /api/wifi-reports`, `GET /api/ai/diagnoses`) | 1-2 query | 1 query verifikasi sesi + 1 query daftar berindeks ber-`LIMIT` |
+| Endpoint baca satu item (`GET /api/health-checks/:id`, `GET /api/wifi-reports/:id`) | 1-3 query | 1 sesi + 1 item + 1 query sampel (hanya bila ada tes bertahan) |
+| Endpoint tulis satu baris (`POST /api/health-checks`, `POST /api/wifi-reports`, `POST /api/auth/pin/*`) | 1-3 query | 1 sesi + 1 tulis (+ 1 baca bila perlu validasi) |
+| `POST /api/wifi-reports/:id/samples` (30 sampel) | 1-2 query | 1 sesi + 1 batch insert (satu statement dengan banyak baris, atau satu transaksi) — dilarang 30 query terpisah |
+| `POST /api/ai/diagnose` | 1-4 query | 1 sesi + 1 rate limit + 2 baca konteks (pemeriksaan terakhir + laporan WiFi terakhir) + 1 simpan jawaban |
+| `GET /api/auth/me`, `GET /api/account/profile` | 1-2 query | 1 sesi + 1 profil (profil boleh digabung ke query sesi dengan JOIN bila memungkinkan) |
+| `DELETE /api/account` (hapus akun) | 1-3 query | 1 sesi + 1 hapus pengguna (cascade menghapus baris anak) + 1 hapus sesi lain; bila cascade tidak aktif, hapus anak secara eksplisit dalam satu transaksi |
+| `GET /api/health`, `GET /api/ping` | 0 query | Dilarang menyentuh D1 (lihat `ARCHITECTURE.md` bagian 3.6) |
 
 Aturan:
 
@@ -324,7 +324,7 @@ Aturan indeks:
 - Respons daftar maksimal 100 KB (JSON). Bila satu halaman daftar
   melebihi itu, `LIMIT` diturunkan atau kolom besar dipisah ke
   endpoint detail.
-- Respons `GET /ping` maksimal 1 KB (target latensi; tanpa D1).
+- Respons `GET /api/ping` maksimal 1 KB (target latensi; tanpa D1).
 - Frontend tidak meminta data yang tidak ditampilkan. Contoh:
   halaman daftar tidak meminta kolom `ringkasan` lengkap atau
   `jawaban` AI; halaman detail yang memintanya.
@@ -355,7 +355,7 @@ digabung ke main.
 | 3 | N+1 query (satu query daftar + satu query per item di dalam loop) | 20 item = 21 query; melanggar anggaran query dan menghabiskan kuota D1 | Satu query dengan JOIN atau `WHERE id IN (...)`, atau satu query agregat |
 | 4 | Gambar tanpa lebar/tinggi (atau tanpa rasio aspek) | Menyebabkan layout shift (CLS) saat gambar selesai dimuat | Selalu tentukan dimensi atau rasio aspek di HTML/CSS |
 | 5 | `SELECT *` pada daftar dengan kolom besar | Mengirim kolom `ringkasan`/`jawaban` yang tidak ditampilkan; membesarkan payload dan waktu respons | Pilih kolom yang ditampilkan saja; kolom besar hanya di endpoint detail |
-| 6 | Query tanpa `LIMIT` pada daftar | Bisa mengembalikan ribuan baris sekaligus; menghabiskan kuota baca dan memori Worker | Selalu pakai `LIMIT` + paginasi (`offset` atau kursor) |
+| 6 | Query tanpa `LIMIT` pada daftar | Bisa mengembalikan ribuan baris sekaligus; menghabiskan kuota baca dan memori Worker | Selalu pakai `LIMIT` + paginasi cursor keyset (K-32) |
 | 7 | Memuat jsPDF, library grafik, atau library berat lain di chunk awal | Melanggar anggaran bundle awal 200 KB | Dynamic `import()` saat pertama dipakai (lihat bagian 3.2) |
 | 8 | Mengunduh font web (Google Fonts atau `@font-face` eksternal) | Menambah transfer dan menunda render teks; gagal saat koneksi lemot | Font sistem (lihat bagian 3.4) |
 | 9 | Prefetch semua rute sekaligus | Memboroskan kuota pengguna dan bersaing dengan konten yang benar-benar dibuka | Prefetch maksimal dua rute yang paling mungkin dibuka, setelah TTI, dan tidak saat mode hemat data |
@@ -432,7 +432,7 @@ digabung ke main.
   nyata (bukan emulator) dengan koneksi 4G yang dibatasi
   (atau throttling di Chrome DevTools dengan profil 4G lambat).
 - **Yang diukur**: LCP dan TTI di `/`, `/dashboard`, `/wifi`;
-  waktu unduh file tes 1 MB; dan waktu respons `GET /ping`.
+  waktu unduh file tes 1 MB; dan waktu respons `GET /api/ping`.
 - **Hasil dicatat** di catatan rilis (tanggal, perangkat, kondisi
   jaringan, angka yang didapat). Tanpa catatan ini, klaim "cepat"
   tidak dianggap terbukti.

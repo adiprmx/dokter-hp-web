@@ -8,8 +8,11 @@ import {
 import { Link } from "react-router-dom";
 import {
   PESAN_GALAT_UMUM,
+  PESAN_PIN_LEMAH,
   PESAN_PIN_TIDAK_VALID,
   PESAN_TANPA_KONEKSI,
+  SARAN_PIN_KUAT,
+  pesanValidasiPinBaru,
   validasiFormatPin,
   type InfoPengguna,
 } from "../lib/pin";
@@ -18,12 +21,18 @@ import { Button } from "../components/ui/Button";
 
 // Layar atur/ubah/hapus PIN (/pengaturan/pin): atur PIN baru atau ubah PIN
 // lama (POST /api/auth/pin/set), hapus PIN (POST /api/auth/pin/delete),
-// validasi 4-8 digit angka. Status PIN saat ini dibaca dari
-// GET /api/auth/me. Endpoint PIN boleh dipanggil saat sesi terkunci
-// (keputusan koordinator K-05) — jalur pemulihan bila PIN lupa.
+// validasi 4-8 digit angka + tolak PIN lemah (R-11). Status PIN saat ini
+// dibaca dari GET /api/auth/me. Endpoint PIN boleh dipanggil saat sesi
+// terkunci (keputusan koordinator K-05) — jalur pemulihan bila PIN lupa.
+// Ubah/hapus PIN dari sesi terkunci wajib PIN lama atau login Google
+// segar (K-70): bila server menjawab PIN_LAMA_DIPERLUKAN, kolom PIN lama
+// dimunculkan. /pin/set TIDAK PERNAH membuka sesi — sesudah berhasil,
+// sesi yang terkunci tetap terkunci dan pengguna diarahkan ke /kunci.
 // Teks mengikuti docs/copy.md bagian 12 dan 13.
 
 const PESAN_PIN_TIDAK_SAMA = "PIN yang diulang tidak sama. Periksa lagi.";
+const PESAN_PIN_LAMA_DIPERLUKAN =
+  "Masukkan PIN lama untuk mengubah PIN.";
 
 const CINCIN_FOKUS =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black";
@@ -37,10 +46,15 @@ export default function AturPinPage() {
   const [gagalMuat, setGagalMuat] = useState(false);
   const [sesiHabis, setSesiHabis] = useState(false);
   const [pinDiatur, setPinDiatur] = useState<boolean | null>(null);
+  const [sesiTerkunci, setSesiTerkunci] = useState(false);
   const [pinBaru, setPinBaru] = useState("");
   const [pinUlang, setPinUlang] = useState("");
+  const [pinLama, setPinLama] = useState("");
+  const [perluPinLama, setPerluPinLama] = useState(false);
+  const [aksiTertunda, setAksiTertunda] = useState<"set" | "hapus" | null>(null);
   const [galatPin, setGalatPin] = useState<string | null>(null);
   const [galatUlang, setGalatUlang] = useState<string | null>(null);
+  const [galatPinLama, setGalatPinLama] = useState<string | null>(null);
   const [pesan, setPesan] = useState<string | null>(null);
   const [sukses, setSukses] = useState<string | null>(null);
   const [menyimpan, setMenyimpan] = useState(false);
@@ -48,6 +62,7 @@ export default function AturPinPage() {
   const [tampilKonfirmasi, setTampilKonfirmasi] = useState(false);
   const pinBaruRef = useRef<HTMLInputElement | null>(null);
   const pinUlangRef = useRef<HTMLInputElement | null>(null);
+  const pinLamaRef = useRef<HTMLInputElement | null>(null);
 
   const periksaSesi = useCallback(async () => {
     setMemuat(true);
@@ -63,6 +78,7 @@ export default function AturPinPage() {
         return;
       }
       setPinDiatur(saya.pin_diatur);
+      setSesiTerkunci(saya.sesi_terkunci);
       setMemuat(false);
     } catch (galat) {
       if (galat instanceof ApiError && galat.status === 401) {
@@ -93,10 +109,12 @@ export default function AturPinPage() {
     event.preventDefault();
     setGalatPin(null);
     setGalatUlang(null);
+    setGalatPinLama(null);
     setPesan(null);
     setSukses(null);
-    if (!validasiFormatPin(pinBaru)) {
-      setGalatPin(PESAN_PIN_TIDAK_VALID);
+    const galatBaru = pesanValidasiPinBaru(pinBaru);
+    if (galatBaru) {
+      setGalatPin(galatBaru === PESAN_PIN_LEMAH ? `${galatBaru} ${SARAN_PIN_KUAT}` : galatBaru);
       pinBaruRef.current?.focus();
       return;
     }
@@ -105,24 +123,53 @@ export default function AturPinPage() {
       pinUlangRef.current?.focus();
       return;
     }
+    if (perluPinLama && !validasiFormatPin(pinLama)) {
+      setGalatPinLama(PESAN_PIN_TIDAK_VALID);
+      pinLamaRef.current?.focus();
+      return;
+    }
     setMenyimpan(true);
     try {
-      await panggilApi<{ pin_diatur: boolean }>("/api/auth/pin/set", {
-        method: "POST",
-        body: { pin: pinBaru },
-      });
+      const hasil = await panggilApi<{ pin_diatur: boolean; sesi_terkunci: boolean }>(
+        "/api/auth/pin/set",
+        {
+          method: "POST",
+          body: pinLama ? { pin: pinBaru, pin_lama: pinLama } : { pin: pinBaru },
+        },
+      );
       setSukses(pinDiatur ? "PIN berhasil diubah." : "PIN berhasil diatur.");
       setPinDiatur(true);
+      setSesiTerkunci(hasil?.sesi_terkunci ?? false);
       setPinBaru("");
       setPinUlang("");
+      setPinLama("");
+      setPerluPinLama(false);
+      setAksiTertunda(null);
     } catch (galat) {
       if (galat instanceof ApiError) {
         if (galat.status === 401) {
+          if (galat.code === "PIN_SALAH") {
+            setGalatPinLama("PIN lama salah, coba lagi.");
+            pinLamaRef.current?.focus();
+            return;
+          }
           setSesiHabis(true);
           return;
         }
+        if (galat.code === "PIN_LAMA_DIPERLUKAN") {
+          setPerluPinLama(true);
+          setAksiTertunda("set");
+          setPesan(PESAN_PIN_LAMA_DIPERLUKAN);
+          // Fokus dipindah setelah kolom PIN lama dirender.
+          setTimeout(() => pinLamaRef.current?.focus(), 0);
+          return;
+        }
         if (galat.code === "VALIDATION_ERROR" || galat.code === "PIN_TIDAK_VALID") {
-          setGalatPin(PESAN_PIN_TIDAK_VALID);
+          if (galat.details?.["alasan"] === "PIN_LEMAH") {
+            setGalatPin(`${PESAN_PIN_LEMAH} ${SARAN_PIN_KUAT}`);
+          } else {
+            setGalatPin(PESAN_PIN_TIDAK_VALID);
+          }
           pinBaruRef.current?.focus();
           return;
         }
@@ -138,18 +185,41 @@ export default function AturPinPage() {
   const hapusPin = async () => {
     setPesan(null);
     setSukses(null);
+    setGalatPinLama(null);
+    if (perluPinLama && !validasiFormatPin(pinLama)) {
+      setGalatPinLama(PESAN_PIN_TIDAK_VALID);
+      pinLamaRef.current?.focus();
+      return;
+    }
     setMenghapus(true);
     try {
       await panggilApi<{ pin_diatur: boolean }>("/api/auth/pin/delete", {
         method: "POST",
+        body: pinLama ? { pin_lama: pinLama } : {},
       });
       setSukses("PIN berhasil dihapus.");
       setPinDiatur(false);
+      setSesiTerkunci(false);
       setTampilKonfirmasi(false);
+      setPinLama("");
+      setPerluPinLama(false);
+      setAksiTertunda(null);
     } catch (galat) {
       if (galat instanceof ApiError) {
         if (galat.status === 401) {
+          if (galat.code === "PIN_SALAH") {
+            setGalatPinLama("PIN lama salah, coba lagi.");
+            pinLamaRef.current?.focus();
+            return;
+          }
           setSesiHabis(true);
+          return;
+        }
+        if (galat.code === "PIN_LAMA_DIPERLUKAN") {
+          setPerluPinLama(true);
+          setAksiTertunda("hapus");
+          setPesan(PESAN_PIN_LAMA_DIPERLUKAN);
+          setTimeout(() => pinLamaRef.current?.focus(), 0);
           return;
         }
         if (galat.code === "CONFLICT") {
@@ -223,6 +293,39 @@ export default function AturPinPage() {
     );
   }
 
+  const kolomPinLama = (
+    <div>
+      <label
+        htmlFor="pin-lama"
+        className="block text-sm font-medium text-zinc-100"
+      >
+        PIN lama
+      </label>
+      <input
+        id="pin-lama"
+        ref={pinLamaRef}
+        type="tel"
+        inputMode="numeric"
+        autoComplete="off"
+        autoCorrect="off"
+        maxLength={8}
+        value={pinLama}
+        onChange={(event) => {
+          setPinLama(hanyaDigit(event.target.value));
+          setGalatPinLama(null);
+        }}
+        aria-invalid={galatPinLama !== null}
+        aria-describedby={galatPinLama ? "galat-pin-lama" : undefined}
+        className={`mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3 text-lg tracking-widest text-white placeholder-zinc-400 disabled:bg-[#27272a] disabled:text-[#a1a1aa] disabled:placeholder-zinc-500 ${CINCIN_FOKUS}`}
+      />
+      {galatPinLama && (
+        <p id="galat-pin-lama" role="alert" className="mt-2 text-sm text-red-400">
+          {galatPinLama}
+        </p>
+      )}
+    </div>
+  );
+
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
       <h1
@@ -248,6 +351,17 @@ export default function AturPinPage() {
           className="mt-6 rounded-xl border border-emerald-400/45 bg-emerald-400/10 px-4 py-3 text-sm leading-relaxed text-emerald-400"
         >
           {sukses}
+          {sesiTerkunci && (
+            <span className="mt-2 block">
+              Sesi masih terkunci.{" "}
+              <Link
+                to="/kunci"
+                className={`font-semibold underline underline-offset-4 ${CINCIN_FOKUS}`}
+              >
+                Buka dengan PIN baru
+              </Link>
+            </span>
+          )}
         </div>
       )}
       {pesan && (
@@ -260,6 +374,9 @@ export default function AturPinPage() {
       )}
 
       <form className="mt-6" onSubmit={(event) => void simpanPin(event)} noValidate>
+        {perluPinLama && aksiTertunda === "set" && (
+          <div className="mb-5">{kolomPinLama}</div>
+        )}
         <div>
           <label
             htmlFor="pin-baru"
@@ -343,6 +460,9 @@ export default function AturPinPage() {
           <p className="mt-2 text-sm leading-relaxed text-zinc-400">
             PIN akan dihapus. Aplikasi tidak lagi meminta PIN saat dibuka.
           </p>
+          {perluPinLama && aksiTertunda === "hapus" && (
+            <div className="mt-4">{kolomPinLama}</div>
+          )}
           {!tampilKonfirmasi ? (
             <Button
               variant="secondary"

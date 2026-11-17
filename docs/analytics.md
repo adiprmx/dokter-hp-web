@@ -48,11 +48,11 @@ tanpa revisi dokumen ini dan persetujuan koordinator.
 |---|---|---|---|---|
 | 1 | Kunjungan harian | `kunjungan` | Jumlah pemuatan halaman (page view) per hari, di semua layar | Client mengirim satu peristiwa per pemuatan halaman |
 | 2 | Tes WiFi per hari | `tes_wifi` | Jumlah tes WiFi yang selesai dijalankan per hari (tes sekali jalan maupun tes bertahan 30 detik, masing-masing dihitung satu) | Client mengirim satu peristiwa saat tes selesai |
-| 3 | Pertanyaan AI per hari | `pertanyaan_ai` | Jumlah pertanyaan yang dikirim ke Diagnosis AI per hari | **Dihitung di server** di dalam handler `POST /ai/diagnose` (lihat bagian 2.1) |
+| 3 | Pertanyaan AI per hari | `pertanyaan_ai` | Jumlah pertanyaan yang dikirim ke Diagnosis AI per hari | **Dihitung di server** di dalam handler `POST /api/ai/diagnose` (lihat bagian 2.1) |
 
 ### 2.1 Mengapa pertanyaan AI dihitung di server
 
-Pertanyaan AI hanya bisa terjadi lewat endpoint `POST /ai/diagnose`
+Pertanyaan AI hanya bisa terjadi lewat endpoint `POST /api/ai/diagnose`
 yang sudah terautentikasi (lihat `ARCHITECTURE.md` bagian 3.4).
 Menghitungnya di server — satu penambahan penghitung di dalam
 handler yang sama — membuat angka ini otoritatif: tidak bisa
@@ -500,7 +500,7 @@ di tabel terpisah dan tidak digabungkan dengan analitik).
 - [ ] Rute `POST /api/analytics/event` di Worker — validasi
       ketat (bagian 5.2) + rate limit (bagian 5.3).
 - [ ] Penambahan penghitung `pertanyaan_ai` di dalam handler
-      `POST /ai/diagnose` (bagian 2.1).
+      `POST /api/ai/diagnose` (bagian 2.1).
 - [ ] Rute `GET /api/analytics/summary` + pembatasan admin
       lewat secret `ADMIN_USER_IDS` (bagian 5.5–5.6).
 - [ ] Pengiriman peristiwa dari frontend: `kunjungan` sekali

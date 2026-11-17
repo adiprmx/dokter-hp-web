@@ -27,7 +27,7 @@ Tailwind v4 (konfigurasi berbasis CSS) dapat diputuskan kemudian bila diperlukan
 dokter-hp-web/
 ├── apps/
 │   ├── web/                  # Frontend (Vite + React + TypeScript)
-│   │   ├── public/           # Aset statis (termasuk speedtest/1mb.bin)
+│   │   ├── public/           # Aset statis (termasuk speedtest-1mb.bin)
 │   │   └── src/
 │   │       ├── pages/        # Halaman per rute
 │   │       ├── components/   # Komponen UI bersama
@@ -94,7 +94,7 @@ data tetap konsisten.
 ### Vercel (mirror)
 
 Deploy frontend dari direktori `apps/web` (framework preset: Vite).
-Variabel `VITE_API_URL` diisi alamat API Worker produksi bila API tidak
+Variabel `VITE_API_BASE_URL` diisi alamat API Worker produksi bila API tidak
 satu domain dengan frontend.
 
 ## Anggaran

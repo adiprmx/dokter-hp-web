@@ -112,6 +112,9 @@ export default function PengaturanPage() {
   const [inputHapus, setInputHapus] = useState("");
   const [menghapusAkun, setMenghapusAkun] = useState(false);
   const [pesanHapus, setPesanHapus] = useState<Pesan>(null);
+  // R-09 (K-72): hapus akun wajib autentikasi baru ≤10 menit. Bila
+  // server menjawab LOGIN_ULANG_DIPERLUKAN, tampilkan tombol masuk lagi.
+  const [perluMasukLagi, setPerluMasukLagi] = useState(false);
 
   const [mengeluarkan, setMengeluarkan] = useState(false);
 
@@ -324,6 +327,7 @@ export default function PengaturanPage() {
     }
     setMenghapusAkun(true);
     setPesanHapus(null);
+    setPerluMasukLagi(false);
     try {
       await panggilApi("/api/account", {
         method: "DELETE",
@@ -337,6 +341,12 @@ export default function PengaturanPage() {
           jenis: "galat",
           teks: `Ketik ${kataKonfirmasi} persis seperti contoh untuk melanjutkan.`,
         });
+      } else if (err instanceof ApiError && err.code === "LOGIN_ULANG_DIPERLUKAN") {
+        setPesanHapus({
+          jenis: "galat",
+          teks: "Demi keamanan, masuk lagi terlebih dahulu sebelum menghapus akun.",
+        });
+        setPerluMasukLagi(true);
       } else {
         setPesanHapus({ jenis: "galat", teks: "Akun tidak bisa dihapus. Coba lagi." });
       }
@@ -680,20 +690,29 @@ export default function PengaturanPage() {
                   </div>
                   <PesanStatus pesan={pesanHapus} />
                   <div className="flex flex-wrap gap-3">
-                    <Button
-                      variant="danger"
-                      onClick={() => void hapusAkun()}
-                      loading={menghapusAkun}
-                      disabled={!konfirmasiCocok}
-                    >
-                      Ya, hapus akun saya
-                    </Button>
+                    {perluMasukLagi ? (
+                      <Button
+                        onClick={() => navigate("/masuk", { replace: true })}
+                      >
+                        Masuk lagi
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="danger"
+                        onClick={() => void hapusAkun()}
+                        loading={menghapusAkun}
+                        disabled={!konfirmasiCocok}
+                      >
+                        Ya, hapus akun saya
+                      </Button>
+                    )}
                     <Button
                       variant="secondary"
                       onClick={() => {
                         setTampilKonfirmasiHapus(false);
                         setInputHapus("");
                         setPesanHapus(null);
+                        setPerluMasukLagi(false);
                       }}
                       disabled={menghapusAkun}
                     >

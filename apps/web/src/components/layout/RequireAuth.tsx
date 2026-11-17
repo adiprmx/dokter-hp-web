@@ -140,6 +140,16 @@ export default function RequireAuth({
   const [status, setStatus] = useState<StatusPemeriksaan>("memeriksa");
   const [percobaanUlang, setPercobaanUlang] = useState(0);
 
+  // BUG-04 (QA Wave 4): efek ini dulu hanya bergantung pada
+  // [percobaanUlang]. React memakai ulang instans RequireAuth yang sama
+  // saat pindah rute (tipe komponen sama di posisi sama dalam <Routes>),
+  // sehingga status basi "terkunci" dari layar kunci terbawa ke
+  // /dashboard setelah buka kunci PIN berhasil: gerbang mengarahkan ke
+  // /kunci, KunciPinPage memeriksa ulang dan mengarahkan kembali ke
+  // /dashboard, begitu seterusnya (~4x/detik). Karena itu pemeriksaan
+  // sesi WAJIB diulang setiap kali rute atau mode berubah — dan status
+  // WAJIB kembali ke "memeriksa" selama pemeriksaan berjalan, agar
+  // keputusan arah dari status basi tidak sempat mengarahkan dulu.
   useEffect(() => {
     let aktif = true;
     setStatus("memeriksa");
@@ -153,7 +163,7 @@ export default function RequireAuth({
     return () => {
       aktif = false;
     };
-  }, [percobaanUlang]);
+  }, [percobaanUlang, lokasi.pathname, mode]);
 
   if (status === "memeriksa") {
     return (

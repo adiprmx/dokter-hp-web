@@ -6,7 +6,7 @@
 
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buatRouterAuth } from './routes';
+import { buatRouterAuth, validasiRedirect } from './routes';
 import { authMiddleware, getSessionId, getUserId, wajibLogin, wajibTidakTerkunci, type VariabelAuth } from './middleware';
 import { hashToken, NAMA_COOKIE_SESI, type BarisPengguna, type BarisSesi, type DbD1, type EnvAuth, type PernyataanD1 } from './session';
 
@@ -26,6 +26,7 @@ class D1Palsu implements DbD1 {
   sesi = new Map<string, BarisSesi>();
   percobaanPin = new Map<string, Baris>();
   bukaPin = new Map<string, Baris>();
+  batasLaju = new Map<string, Baris>();
   /** Bila true, semua INSERT melempar galat (simulasi database gagal). */
   gagalTulis = false;
 
@@ -64,6 +65,9 @@ class D1Palsu implements DbD1 {
         if (sqlNormal.includes('FROM PIN_UNLOCKS WHERE SESSION_ID')) {
           return (db.bukaPin.get(nilai[0] as string) ?? null) as T | null;
         }
+        if (sqlNormal.includes('FROM RATE_LIMITS WHERE KUNCI')) {
+          return (db.batasLaju.get(nilai[0] as string) ?? null) as T | null;
+        }
         return null;
       },
       async all<T>(): Promise<{ results: T[]; success: boolean }> {
@@ -71,9 +75,17 @@ class D1Palsu implements DbD1 {
           const hasil = [...db.sesi.values()].filter((s) => s.user_id === nilai[0]);
           return { results: hasil as T[], success: true };
         }
+        if (sqlNormal.includes('FROM RATE_LIMITS WHERE KEDALUWARSA_PADA')) {
+          const batas = (nilai[1] as number) ?? 100;
+          const hasil = [...db.batasLaju.values()]
+            .filter((b) => (b.kedaluwarsa_pada as string) < (nilai[0] as string))
+            .slice(0, batas)
+            .map((b) => ({ kunci: b.kunci }));
+          return { results: hasil as T[], success: true };
+        }
         return { results: [], success: true };
       },
-      async run(): Promise<{ success: boolean }> {
+      async run(): Promise<{ success: boolean; meta?: { changes: number } }> {
         if (db.gagalTulis && sqlNormal.startsWith('INSERT')) {
           throw new Error('D1 gagal tulis (simulasi)');
         }
@@ -127,13 +139,31 @@ class D1Palsu implements DbD1 {
           return { success: true };
         }
         if (sqlNormal.startsWith('INSERT INTO PIN_ATTEMPTS')) {
-          const [user_id, gagal_berturut, terkunci_sampai] = nilai as [
-            string,
-            number,
-            string | null,
-          ];
-          db.percobaanPin.set(user_id, { user_id, gagal_berturut, terkunci_sampai });
-          return { success: true };
+          // Pola atomik R-04: INSERT ... VALUES (?, 1, NULL)
+          // ON CONFLICT DO UPDATE SET gagal_berturut + 1.
+          const [user_id] = nilai as [string];
+          const lama = db.percobaanPin.get(user_id);
+          if (lama) {
+            lama.gagal_berturut = (lama.gagal_berturut as number) + 1;
+          } else {
+            db.percobaanPin.set(user_id, {
+              user_id,
+              gagal_berturut: 1,
+              terkunci_sampai: null,
+            });
+          }
+          return { success: true, meta: { changes: 1 } };
+        }
+        if (sqlNormal.startsWith('UPDATE PIN_ATTEMPTS SET TERKUNCI_SAMPAI')) {
+          // Guard atomik: kunci hanya bila belum ada kunci aktif.
+          const [terkunci_sampai, user_id, sekarang] = nilai as [string, string, string];
+          const baris = db.percobaanPin.get(user_id);
+          const lama = baris?.terkunci_sampai as string | null | undefined;
+          if (baris && (lama === null || lama === undefined || lama <= sekarang)) {
+            baris.terkunci_sampai = terkunci_sampai;
+            return { success: true, meta: { changes: 1 } };
+          }
+          return { success: true, meta: { changes: 0 } };
         }
         if (sqlNormal.startsWith('INSERT OR REPLACE INTO PIN_UNLOCKS')) {
           const [session_id, dibuka_pada] = nilai as [string, string];
@@ -173,6 +203,23 @@ class D1Palsu implements DbD1 {
           }
           return { success: true };
         }
+        if (sqlNormal.startsWith('DELETE FROM SESSIONS WHERE USER_ID')) {
+          // Prune R-22: pertahankan N sesi terbaru, hapus sisanya.
+          const [user_id, , batas] = nilai as [string, string, number];
+          const milik = [...db.sesi.values()]
+            .filter((s) => s.user_id === user_id)
+            .sort((a, b) =>
+              a.dibuat_pada === b.dibuat_pada
+                ? b.id.localeCompare(a.id)
+                : b.dibuat_pada.localeCompare(a.dibuat_pada),
+            );
+          let terhapus = 0;
+          for (const sesi of milik.slice(batas)) {
+            db.sesi.delete(sesi.id);
+            terhapus += 1;
+          }
+          return { success: true, meta: { changes: terhapus } };
+        }
         if (sqlNormal.startsWith('DELETE FROM PIN_ATTEMPTS')) {
           db.percobaanPin.delete(nilai[0] as string);
           return { success: true };
@@ -181,10 +228,35 @@ class D1Palsu implements DbD1 {
           db.bukaPin.delete(nilai[0] as string);
           return { success: true };
         }
+        if (sqlNormal.startsWith('INSERT OR IGNORE INTO RATE_LIMITS')) {
+          // cekDanCatat (R-03): sisipkan baris baru bila belum ada.
+          const [kunci, jendela_mulai, kedaluwarsa_pada] = nilai as [string, string, string];
+          if (db.batasLaju.has(kunci)) {
+            return { success: true, meta: { changes: 0 } };
+          }
+          db.batasLaju.set(kunci, { kunci, jumlah: 0, jendela_mulai, kedaluwarsa_pada });
+          return { success: true, meta: { changes: 1 } };
+        }
         if (sqlNormal.startsWith('INSERT INTO RATE_LIMITS')) {
-          // Rate limit (lib/ratelimit): mock tidak menyimpan
-          // hitungan — batas tidak pernah tercapai di tes auth.
-          return { success: true };
+          // Pola lama (tidak lagi dipakai cekDanCatat).
+          return { success: true, meta: { changes: 1 } };
+        }
+        if (sqlNormal.startsWith('UPDATE RATE_LIMITS SET JUMLAH')) {
+          // Increment bersyarat R-03: naik hanya bila di bawah batas.
+          const [kunci, batas] = nilai as [string, number];
+          const baris = db.batasLaju.get(kunci);
+          if (baris && (baris.jumlah as number) < batas) {
+            baris.jumlah = (baris.jumlah as number) + 1;
+            return { success: true, meta: { changes: 1 } };
+          }
+          return { success: true, meta: { changes: 0 } };
+        }
+        if (sqlNormal.startsWith('DELETE FROM RATE_LIMITS WHERE KUNCI IN')) {
+          let terhapus = 0;
+          for (const kunci of nilai as string[]) {
+            if (db.batasLaju.delete(kunci)) terhapus += 1;
+          }
+          return { success: true, meta: { changes: terhapus } };
         }
         throw new Error(`SQL tidak dikenali D1 palsu: ${sql}`);
       },
@@ -210,6 +282,7 @@ function buatEnv(db: DbD1, overrides: Partial<EnvAuth> = {}): EnvAuth {
     GOOGLE_CLIENT_SECRET: 'client-secret-uji',
     GOOGLE_REDIRECT_URI: REDIRECT_URI,
     FRONTEND_URL,
+    PIN_PEPPER: 'pepper-uji-bukan-rahasia',
     ...overrides,
   };
 }
@@ -275,14 +348,21 @@ afterEach(() => {
 /**
  * Menjalankan alur masuk lengkap (Google + callback) dan mengembalikan
  * token sesi mentah dari cookie. Email profil bisa diubah per tes.
+ * Parameter ip opsional memakai alamat IP berbeda agar tidak terkena
+ * batas mulai OAuth per IP (dipakai tes R-22).
  */
 async function masukSebagai(
   app: Hono<{ Bindings: EnvAuth }>,
   env: EnvAuth,
   email = 'pengguna@contoh.test',
+  ip?: string,
 ): Promise<string> {
   emailProfil = email;
-  const mulai = await app.request('/api/auth/google', {}, env);
+  const mulai = await app.request(
+    '/api/auth/google',
+    ip ? { headers: { 'CF-Connecting-IP': ip } } : {},
+    env,
+  );
   expect(mulai.status).toBe(302);
   const state = ambilCookieSet(mulai, 'dokter_hp_oauth_state');
   const verifier = ambilCookieSet(mulai, 'dokter_hp_oauth_verifier');
@@ -351,11 +431,19 @@ describe('GET /api/auth/google', () => {
     expect(redirectCookie).toContain('Path=/api/auth');
   });
 
-  it('mengabaikan tujuan redirect yang tidak valid (URL luar / //)', async () => {
+  it('mengabaikan tujuan redirect yang tidak valid (URL luar / // / backslash)', async () => {
     const db = new D1Palsu();
     const env = buatEnv(db);
     const app = buatApp();
-    for (const buruk of ['https://jahat.test/phishing', '//jahat.test', 'javascript:alert(1)']) {
+    for (const buruk of [
+      'https://jahat.test/phishing',
+      '//jahat.test',
+      'javascript:alert(1)',
+      // R-06: backslash dinormalkan browser menjadi // (open redirect).
+      '/\\jahat.test',
+      '/wifi\\@jahat.test',
+      '/dashboard\nhttps://jahat.test',
+    ]) {
       const res = await app.request(
         `/api/auth/google?redirect=${encodeURIComponent(buruk)}`,
         {},
@@ -366,20 +454,161 @@ describe('GET /api/auth/google', () => {
     }
   });
 
-  it('mengembalikan 500 INTERNAL_ERROR bila konfigurasi Google belum diatur', async () => {
+  it('menerima URL absolut satu origin dengan FRONTEND_URL (R-06)', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const res = await app.request(
+      `/api/auth/google?redirect=${encodeURIComponent(`${FRONTEND_URL}/wifi?tab=riwayat`)}`,
+      {},
+      env,
+    );
+    expect(res.status).toBe(302);
+    // Cookie menyimpan path yang sudah divalidasi (bukan URL absolut).
+    expect(ambilCookieSet(res, 'dokter_hp_oauth_redirect')).toBe(
+      '%2Fwifi%3Ftab%3Driwayat',
+    );
+  });
+
+  it('percobaan mulai OAuth ke-11 dalam satu menit ditolak 429 + Retry-After (R-12)', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    for (let i = 0; i < 10; i++) {
+      const res = await app.request('/api/auth/google', {}, env);
+      expect(res.status).toBe(302);
+    }
+    const ke11 = await app.request('/api/auth/google', {}, env);
+    expect(ke11.status).toBe(429);
+    const badan = (await ke11.json()) as { error: { code: string } };
+    expect(badan.error.code).toBe('RATE_LIMITED');
+    const retryAfter = Number(ke11.headers.get('Retry-After'));
+    expect(Number.isInteger(retryAfter)).toBe(true);
+    expect(retryAfter).toBeGreaterThan(0);
+    expect(retryAfter).toBeLessThanOrEqual(60);
+  });
+
+  it('redirect ke /masuk?error=oauth_belum_disiapkan bila konfigurasi Google belum diatur (K-89)', async () => {
     const db = new D1Palsu();
     const env = buatEnv(db, { GOOGLE_CLIENT_ID: '' });
     const app = buatApp();
     const res = await app.request('/api/auth/google', {}, env);
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Location')).toBe(
+      `${FRONTEND_URL}/masuk?error=oauth_belum_disiapkan`,
+    );
+  });
+
+  it('redirect ke /masuk bila secret atau redirect URI kosong (K-89)', async () => {
+    const db = new D1Palsu();
+    const app = buatApp();
+    for (const overrides of [{ GOOGLE_CLIENT_SECRET: '' }, { GOOGLE_REDIRECT_URI: '' }]) {
+      const res = await app.request('/api/auth/google', {}, buatEnv(db, overrides));
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Location')).toBe(
+        `${FRONTEND_URL}/masuk?error=oauth_belum_disiapkan`,
+      );
+    }
+  });
+
+  it('redirect relatif bila FRONTEND_URL juga kosong (K-89)', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db, { GOOGLE_CLIENT_ID: '', FRONTEND_URL: '' });
+    const app = buatApp();
+    const res = await app.request('/api/auth/google', {}, env);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Location')).toBe('/masuk?error=oauth_belum_disiapkan');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/auth/status (K-89)
+// ---------------------------------------------------------------------------
+
+describe('GET /api/auth/status', () => {
+  it('google_tersedia true bila ketiga nilai konfigurasi terisi', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const res = await app.request('/api/auth/status', {}, env);
+    expect(res.status).toBe(200);
     const badan = (await res.json()) as {
       success: boolean;
-      error: { code: string };
+      data: { google_tersedia: boolean };
       meta: { timestamp: string };
     };
-    expect(badan.success).toBe(false);
-    expect(badan.error.code).toBe('INTERNAL_ERROR');
+    expect(badan.success).toBe(true);
+    expect(badan.data.google_tersedia).toBe(true);
     expect(typeof badan.meta.timestamp).toBe('string');
+  });
+
+  it('google_tersedia false bila salah satu nilai konfigurasi kosong', async () => {
+    const db = new D1Palsu();
+    const app = buatApp();
+    for (const overrides of [
+      { GOOGLE_CLIENT_ID: '' },
+      { GOOGLE_CLIENT_SECRET: '' },
+      { GOOGLE_REDIRECT_URI: '' },
+    ]) {
+      const res = await app.request('/api/auth/status', {}, buatEnv(db, overrides));
+      expect(res.status).toBe(200);
+      const badan = (await res.json()) as { data: { google_tersedia: boolean } };
+      expect(badan.data.google_tersedia).toBe(false);
+    }
+  });
+
+  it('tidak pernah membocorkan nilai secret', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const res = await app.request('/api/auth/status', {}, env);
+    const teks = await res.text();
+    expect(teks).not.toContain('client-id-uji');
+    expect(teks).not.toContain('client-secret-uji');
+    expect(teks).not.toContain(REDIRECT_URI);
+  });
+});
+
+describe('validasiRedirect (R-06)', () => {
+  const ASAL = 'https://aplikasi.contoh.test';
+
+  it('menerima path relatif biasa', () => {
+    expect(validasiRedirect('/wifi', ASAL)).toBe('/wifi');
+    expect(validasiRedirect('/pengaturan/pin?tab=1', ASAL)).toBe('/pengaturan/pin?tab=1');
+    expect(validasiRedirect('/dashboard', ASAL)).toBe('/dashboard');
+  });
+
+  it('menerima URL absolut satu origin dan mengembalikan path-nya', () => {
+    expect(validasiRedirect(`${ASAL}/wifi`, ASAL)).toBe('/wifi');
+    expect(validasiRedirect(`${ASAL}/wifi?a=b#frag`, ASAL)).toBe('/wifi?a=b#frag');
+  });
+
+  it('menolak URL luar, //, backslash, dan karakter kontrol', () => {
+    for (const buruk of [
+      'https://jahat.test/phishing',
+      'https://aplikasi.contoh.test.jahat.test/wifi',
+      'https://aplikasi.contoh.test@jahat.test/wifi',
+      '//jahat.test',
+      '/\\jahat.test',
+      '/wifi\\@jahat.test',
+      'javascript:alert(1)',
+      '/dashboard\nhttps://jahat.test',
+      '/wifi\u0000',
+      '',
+    ]) {
+      expect(validasiRedirect(buruk, ASAL)).toBe('/dashboard');
+    }
+    expect(validasiRedirect(null, ASAL)).toBe('/dashboard');
+    expect(validasiRedirect(undefined, ASAL)).toBe('/dashboard');
+  });
+
+  it('menolak URL absolut bila asal tidak diketahui', () => {
+    expect(validasiRedirect(`${ASAL}/wifi`)).toBe('/dashboard');
+    expect(validasiRedirect('/wifi')).toBe('/wifi');
+  });
+
+  it('menolak nilai yang terlalu panjang', () => {
+    expect(validasiRedirect(`/${'a'.repeat(600)}`, ASAL)).toBe('/dashboard');
   });
 });
 
@@ -478,6 +707,26 @@ describe('GET /api/auth/google/callback', () => {
       {
         headers: {
           Cookie: `dokter_hp_oauth_state=${state}; dokter_hp_oauth_verifier=${verifier}; dokter_hp_oauth_redirect=https://jahat.test`,
+        },
+      },
+      env,
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Location')).toBe(`${FRONTEND_URL}/dashboard`);
+  });
+
+  it('callback memakai /dashboard bila cookie redirect berisi backslash (R-06)', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const mulai = await app.request('/api/auth/google', {}, env);
+    const state = ambilCookieSet(mulai, 'dokter_hp_oauth_state');
+    const verifier = ambilCookieSet(mulai, 'dokter_hp_oauth_verifier');
+    const res = await app.request(
+      `/api/auth/google/callback?code=kode-uji&state=${state}`,
+      {
+        headers: {
+          Cookie: `dokter_hp_oauth_state=${state}; dokter_hp_oauth_verifier=${verifier}; dokter_hp_oauth_redirect=%2F%5Cjahat.test`,
         },
       },
       env,
@@ -664,13 +913,32 @@ describe('PIN', () => {
     env: EnvAuth,
     token: string,
     pin: string,
+    pinLama?: string,
   ): Promise<Response> {
     return app.request(
       '/api/auth/pin/set',
       {
         method: 'POST',
         headers: { ...headerCookie(token), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin }),
+        body: JSON.stringify(pinLama ? { pin, pin_lama: pinLama } : { pin }),
+      },
+      env,
+    );
+  }
+
+  async function hapusPin(
+    app: Hono<{ Bindings: EnvAuth }>,
+    env: EnvAuth,
+    token: string,
+    pinLama?: string,
+    jalur = '/api/auth/pin/delete',
+  ): Promise<Response> {
+    return app.request(
+      jalur,
+      {
+        method: 'POST',
+        headers: { ...headerCookie(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify(pinLama ? { pin_lama: pinLama } : {}),
       },
       env,
     );
@@ -693,23 +961,57 @@ describe('PIN', () => {
     );
   }
 
-  it('set PIN menyimpan hash (bukan PIN mentah) dan sesi berjalan tetap terbuka', async () => {
+  /** Menyetel dibuat_pada semua sesi menjadi N menit yang lalu (di luar tenggang). */
+  function tuakanSesi(db: D1Palsu, menit = 11): void {
+    const lama = new Date(Date.now() - menit * 60 * 1000).toISOString();
+    for (const sesi of db.sesi.values()) {
+      sesi.dibuat_pada = lama;
+    }
+  }
+
+  it('set PIN menyimpan hash (bukan PIN mentah) dan TIDAK membuka sesi (K-70b)', async () => {
     const db = new D1Palsu();
     const env = buatEnv(db);
     const app = buatApp();
     const token = await masukSebagai(app, env);
-    const res = await aturPin(app, env, token, '1234');
+    const res = await aturPin(app, env, token, '1357');
     expect(res.status).toBe(200);
-    const badan = (await res.json()) as { success: boolean; data: { pin_diatur: boolean } };
+    const badan = (await res.json()) as {
+      success: boolean;
+      data: { pin_diatur: boolean; sesi_terkunci: boolean };
+    };
     expect(badan.data.pin_diatur).toBe(true);
+    // /pin/set tidak pernah membuka sesi: sesi kini terkunci.
+    expect(badan.data.sesi_terkunci).toBe(true);
     const pengguna = [...db.pengguna.values()][0];
     expect(pengguna.pin_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(pengguna.pin_salt).toMatch(/^[0-9a-f]{32}$/);
-    expect(pengguna.pin_hash).not.toBe('1234');
+    expect(pengguna.pin_hash).not.toBe('1357');
     const me = await app.request('/api/auth/me', { headers: headerCookie(token) }, env);
     const meBadan = (await me.json()) as { data: { pin_diatur: boolean; sesi_terkunci: boolean } };
     expect(meBadan.data.pin_diatur).toBe(true);
-    expect(meBadan.data.sesi_terkunci).toBe(false);
+    expect(meBadan.data.sesi_terkunci).toBe(true);
+    // PIN baru tetap bisa diverifikasi untuk membuka sesi.
+    const verifikasi = await verifikasiPin(app, env, token, '1357');
+    expect(verifikasi.status).toBe(200);
+  });
+
+  it('set PIN menolak PIN lemah (R-11, K-70d)', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const token = await masukSebagai(app, env);
+    for (const pinLemah of ['1234', '0000', '9999', '4321', '012345']) {
+      const res = await aturPin(app, env, token, pinLemah);
+      expect(res.status).toBe(400);
+      const badan = (await res.json()) as {
+        error: { code: string; details: { alasan: string } };
+      };
+      expect(badan.error.code).toBe('VALIDATION_ERROR');
+      expect(badan.error.details.alasan).toBe('PIN_LEMAH');
+    }
+    const pengguna = [...db.pengguna.values()][0];
+    expect(pengguna.pin_hash).toBeNull();
   });
 
   it('set PIN menolak format tidak valid', async () => {
@@ -732,7 +1034,7 @@ describe('PIN', () => {
     const env = buatEnv(db);
     const app = buatApp();
     const tokenPertama = await masukSebagai(app, env);
-    await aturPin(app, env, tokenPertama, '5678');
+    await aturPin(app, env, tokenPertama, '2846');
     // Keluar lalu masuk lagi: sesi baru belum dibuka dengan PIN.
     await app.request('/api/auth/logout', { method: 'POST', headers: headerCookie(tokenPertama) }, env);
     const tokenBaru = await masukSebagai(app, env);
@@ -743,7 +1045,7 @@ describe('PIN', () => {
     );
     const badanTerkunci = (await meTerkunci.json()) as { data: { sesi_terkunci: boolean } };
     expect(badanTerkunci.data.sesi_terkunci).toBe(true);
-    const verifikasi = await verifikasiPin(app, env, tokenBaru, '5678');
+    const verifikasi = await verifikasiPin(app, env, tokenBaru, '2846');
     expect(verifikasi.status).toBe(200);
     const badanVerifikasi = (await verifikasi.json()) as {
       data: { valid: boolean; sesi_terkunci: boolean };
@@ -798,6 +1100,49 @@ describe('PIN', () => {
     expect(badanKunci.error.details.sisa_detik).toBeGreaterThan(0);
     expect(badanKunci.error.details.sisa_detik).toBeLessThanOrEqual(30);
     expect(typeof badanKunci.error.details.terkunci_sampai).toBe('string');
+  });
+
+  it('burst 10 PIN salah paralel: tidak ada PIN_SALAH dengan sisa_percobaan 0 (regresi N-02)', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const token = await masukSebagai(app, env);
+    await aturPin(app, env, token, '2468');
+    const respons = await Promise.all(
+      Array.from({ length: 10 }, () => verifikasiPin(app, env, token, '0000')),
+    );
+    const badan = await Promise.all(
+      respons.map(
+        (res) =>
+          res.json() as Promise<{
+            error: {
+              code: string;
+              details: { sisa_percobaan?: number; terkunci_sampai?: string };
+            };
+          }>,
+      ),
+    );
+    // Invarian N-02: PIN_SALAH hanya bila belum terkunci — setiap
+    // PIN_SALAH membawa sisa_percobaan >= 1; yang sudah melewati
+    // batas menjawab PIN_TERKUNCI.
+    for (const b of badan) {
+      expect(['PIN_SALAH', 'PIN_TERKUNCI']).toContain(b.error.code);
+      if (b.error.code === 'PIN_SALAH') {
+        expect(b.error.details.sisa_percobaan).toBeGreaterThanOrEqual(1);
+      }
+    }
+    expect(badan.some((b) => b.error.code === 'PIN_TERKUNCI')).toBe(true);
+    // Seluruh 10 percobaan tercatat dan kunci aktif (R-04 utuh).
+    const baris = [...db.percobaanPin.values()][0];
+    expect(baris?.gagal_berturut).toBe(10);
+    expect(typeof baris?.terkunci_sampai).toBe('string');
+    // Percobaan ke-11 (sesudah burst) tetap PIN_TERKUNCI.
+    const kesebelas = await verifikasiPin(app, env, token, '0000');
+    expect(kesebelas.status).toBe(403);
+    const badanKesebelas = (await kesebelas.json()) as {
+      error: { code: string };
+    };
+    expect(badanKesebelas.error.code).toBe('PIN_TERKUNCI');
   });
 
   it('format PIN salah pada verify tidak dihitung sebagai percobaan salah', async () => {
@@ -903,6 +1248,232 @@ describe('PIN', () => {
     const badan = (await res.json()) as { data: { pin_diatur: boolean } };
     expect(badan.data.pin_diatur).toBe(false);
   });
+
+  it('endpoint PIN gagal tertutup 500 bila PIN_PEPPER tidak diatur (K-71)', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db, { PIN_PEPPER: undefined });
+    const app = buatApp();
+    const token = await masukSebagai(app, env);
+    const set = await aturPin(app, env, token, '1357');
+    expect(set.status).toBe(500);
+    const badanSet = (await set.json()) as { error: { code: string } };
+    expect(badanSet.error.code).toBe('INTERNAL_ERROR');
+    const verify = await verifikasiPin(app, env, token, '1357');
+    expect(verify.status).toBe(500);
+    const hapus = await hapusPin(app, env, token);
+    expect(hapus.status).toBe(500);
+  });
+
+  it('login ke-11 mencabut sesi terlama, tersisa 10 sesi (R-22)', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const tokenPertama = await masukSebagai(app, env, 'pengguna@contoh.test', '203.0.113.1');
+    const hashPertama = await hashToken(tokenPertama);
+    for (let i = 2; i <= 11; i++) {
+      await masukSebagai(app, env, 'pengguna@contoh.test', `203.0.113.${i}`);
+    }
+    expect(db.sesi.size).toBe(10);
+    const hashTersisa = new Set([...db.sesi.values()].map((s) => s.token_hash));
+    expect(hashTersisa.has(hashPertama)).toBe(false);
+    // Sesi tertua tidak lagi valid.
+    const me = await app.request(
+      '/api/auth/me',
+      { headers: headerCookie(tokenPertama) },
+      env,
+    );
+    expect(me.status).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Kebijakan ubah PIN K-70 / regresi R-02
+// ---------------------------------------------------------------------------
+
+describe('ubah PIN dari sesi terkunci (K-70, R-02)', () => {
+  async function siapkanPenggunaDenganPin(
+    app: Hono<{ Bindings: EnvAuth }>,
+    env: EnvAuth,
+    db: D1Palsu,
+  ): Promise<string> {
+    const tokenPertama = await masukSebagai(app, env);
+    const set = await app.request(
+      '/api/auth/pin/set',
+      {
+        method: 'POST',
+        headers: { ...headerCookie(tokenPertama), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: '1357' }),
+      },
+      env,
+    );
+    expect(set.status).toBe(200);
+    await app.request(
+      '/api/auth/logout',
+      { method: 'POST', headers: headerCookie(tokenPertama) },
+      env,
+    );
+    const tokenBaru = await masukSebagai(app, env);
+    expect(db.sesi.size).toBe(1);
+    return tokenBaru;
+  }
+
+  function tuakanSesi(db: D1Palsu, menit = 11): void {
+    const lama = new Date(Date.now() - menit * 60 * 1000).toISOString();
+    for (const sesi of db.sesi.values()) {
+      sesi.dibuat_pada = lama;
+    }
+  }
+
+  async function panggilSet(
+    app: Hono<{ Bindings: EnvAuth }>,
+    env: EnvAuth,
+    token: string,
+    badan: Record<string, unknown>,
+  ): Promise<Response> {
+    return app.request(
+      '/api/auth/pin/set',
+      {
+        method: 'POST',
+        headers: { ...headerCookie(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify(badan),
+      },
+      env,
+    );
+  }
+
+  it('sesi terkunci di luar tenggang tidak bisa mengatur PIN baru tanpa PIN lama', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const token = await siapkanPenggunaDenganPin(app, env, db);
+    tuakanSesi(db);
+    const res = await panggilSet(app, env, token, { pin: '2846' });
+    expect(res.status).toBe(403);
+    const badan = (await res.json()) as { error: { code: string } };
+    expect(badan.error.code).toBe('PIN_LAMA_DIPERLUKAN');
+    // PIN lama tidak berubah dan masih bisa diverifikasi.
+    const verifikasi = await app.request(
+      '/api/auth/pin/verify',
+      {
+        method: 'POST',
+        headers: { ...headerCookie(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: '1357' }),
+      },
+      env,
+    );
+    expect(verifikasi.status).toBe(200);
+  });
+
+  it('PIN lama yang salah ditolak 401 dan dihitung sebagai percobaan gagal', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const token = await siapkanPenggunaDenganPin(app, env, db);
+    tuakanSesi(db);
+    const res = await panggilSet(app, env, token, { pin: '2846', pin_lama: '0000' });
+    expect(res.status).toBe(401);
+    const badan = (await res.json()) as {
+      error: { code: string; details: { sisa_percobaan: number } };
+    };
+    expect(badan.error.code).toBe('PIN_SALAH');
+    expect(badan.error.details.sisa_percobaan).toBe(4);
+    expect(db.percobaanPin.size).toBe(1);
+  });
+
+  it('PIN lama yang benar mengizinkan ubah PIN, sesi tetap terkunci', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const token = await siapkanPenggunaDenganPin(app, env, db);
+    tuakanSesi(db);
+    const res = await panggilSet(app, env, token, { pin: '2846', pin_lama: '1357' });
+    expect(res.status).toBe(200);
+    const badan = (await res.json()) as {
+      data: { pin_diatur: boolean; sesi_terkunci: boolean };
+    };
+    expect(badan.data.pin_diatur).toBe(true);
+    expect(badan.data.sesi_terkunci).toBe(true);
+    const me = await app.request('/api/auth/me', { headers: headerCookie(token) }, env);
+    const meBadan = (await me.json()) as { data: { sesi_terkunci: boolean } };
+    expect(meBadan.data.sesi_terkunci).toBe(true);
+    // PIN baru berlaku, PIN lama tidak lagi berlaku.
+    const verifikasiBaru = await app.request(
+      '/api/auth/pin/verify',
+      {
+        method: 'POST',
+        headers: { ...headerCookie(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: '2846' }),
+      },
+      env,
+    );
+    expect(verifikasiBaru.status).toBe(200);
+  });
+
+  it('sesi segar (tenggang Google 10 menit) boleh ubah PIN tanpa PIN lama', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const token = await siapkanPenggunaDenganPin(app, env, db);
+    // Sesi baru dibuat beberapa detik lalu: masih dalam tenggang.
+    const res = await panggilSet(app, env, token, { pin: '2846' });
+    expect(res.status).toBe(200);
+    const badan = (await res.json()) as {
+      data: { pin_diatur: boolean; sesi_terkunci: boolean };
+    };
+    expect(badan.data.sesi_terkunci).toBe(true);
+  });
+
+  it('hapus PIN dari sesi terkunci di luar tenggang wajib PIN lama', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const token = await siapkanPenggunaDenganPin(app, env, db);
+    tuakanSesi(db);
+    const tanpaPinLama = await app.request(
+      '/api/auth/pin/delete',
+      {
+        method: 'POST',
+        headers: { ...headerCookie(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      },
+      env,
+    );
+    expect(tanpaPinLama.status).toBe(403);
+    const badan = (await tanpaPinLama.json()) as { error: { code: string } };
+    expect(badan.error.code).toBe('PIN_LAMA_DIPERLUKAN');
+    const denganPinLama = await app.request(
+      '/api/auth/pin/delete',
+      {
+        method: 'POST',
+        headers: { ...headerCookie(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin_lama: '1357' }),
+      },
+      env,
+    );
+    expect(denganPinLama.status).toBe(200);
+  });
+
+  it('ubah PIN ditolak saat PIN terkunci, sekalipun PIN lama benar', async () => {
+    const db = new D1Palsu();
+    const env = buatEnv(db);
+    const app = buatApp();
+    const token = await siapkanPenggunaDenganPin(app, env, db);
+    for (let i = 0; i < 5; i++) {
+      await app.request(
+        '/api/auth/pin/verify',
+        {
+          method: 'POST',
+          headers: { ...headerCookie(token), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: '0000' }),
+        },
+        env,
+      );
+    }
+    const res = await panggilSet(app, env, token, { pin: '2846', pin_lama: '1357' });
+    expect(res.status).toBe(403);
+    const badan = (await res.json()) as { error: { code: string } };
+    expect(badan.error.code).toBe('PIN_TERKUNCI');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -940,7 +1511,7 @@ describe('middleware wajibLogin, wajibTidakTerkunci, dan authMiddleware', () => 
       {
         method: 'POST',
         headers: { ...headerCookie(tokenPertama), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: '9999' }),
+        body: JSON.stringify({ pin: '2846' }),
       },
       env,
     );
@@ -964,7 +1535,7 @@ describe('middleware wajibLogin, wajibTidakTerkunci, dan authMiddleware', () => 
       {
         method: 'POST',
         headers: { ...headerCookie(tokenBaru), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: '9999' }),
+        body: JSON.stringify({ pin: '2846' }),
       },
       env,
     );
@@ -1009,7 +1580,7 @@ describe('middleware wajibLogin, wajibTidakTerkunci, dan authMiddleware', () => 
       {
         method: 'POST',
         headers: { ...headerCookie(tokenPertama), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: '9999' }),
+        body: JSON.stringify({ pin: '2846' }),
       },
       env,
     );
@@ -1032,7 +1603,7 @@ describe('middleware wajibLogin, wajibTidakTerkunci, dan authMiddleware', () => 
       {
         method: 'POST',
         headers: { ...headerCookie(tokenBaru), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: '9999' }),
+        body: JSON.stringify({ pin: '2846' }),
       },
       env,
     );

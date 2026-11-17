@@ -91,16 +91,6 @@ export async function runQuery(
   return hasil.meta?.changes ?? 0;
 }
 
-/** Menghitung total baris untuk paginasi offset (SELECT COUNT(*) ...). */
-export async function queryTotal(
-  db: D1Like,
-  sql: string,
-  ...params: unknown[]
-): Promise<number> {
-  const row = await queryOne<{ jumlah: number }>(db, sql, ...params);
-  return row?.jumlah ?? 0;
-}
-
 // ------------------------------------------------------------------
 // Paginasi cursor (kontrak api-contracts.md bagian 0.6, K-32)
 // ------------------------------------------------------------------

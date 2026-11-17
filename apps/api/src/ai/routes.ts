@@ -64,9 +64,10 @@ import { bacaCache, hitungKunciCache, tulisCache } from './cache';
 import { susunJawabanAturan } from './fallback';
 import { LABEL_SARAN, SYSTEM_PROMPT, buildUserMessage } from './prompt';
 import type { KonteksPerangkat } from './prompt';
-import { cekBatasAi } from './ratelimit';
+import { BATAS_AI_HARIAN, cadangkanKuotaAi, lepaskanKuotaAi } from './ratelimit';
 import type { DbD1 } from './ratelimit';
 import type { VariabelAuth } from '../auth/middleware';
+import { batasLaju } from '../lib/ratelimit';
 import {
   cursorClause,
   paginateRows,
@@ -466,10 +467,16 @@ async function handleTanya(c: AiContext): Promise<Response> {
     }
   }
 
-  // Rate limit: 20 pertanyaan/hari per pengguna (dihitung dari D1).
+  // Kuota AI: 20 pertanyaan/hari per pengguna (R-05). Cadangan
+  // dibuat ATOMIK sebelum Gemini dipanggil (reserve-then-confirm):
+  // burst paralel tidak bisa melewati batas, karena keputusan
+  // diambil database lewat UPDATE bersyarat, bukan hitung-baca
+  // yang bisa basi. Cadangan dilepas bila Gemini gagal atau simpan
+  // diagnosis gagal (lihat di bawah).
   let statusBatas;
+  let jendelaKuota;
   try {
-    statusBatas = await cekBatasAi(db, idPengguna);
+    ({ status: statusBatas, jendela: jendelaKuota } = await cadangkanKuotaAi(db, idPengguna));
   } catch {
     return jawabGalat(
       c,
@@ -490,7 +497,10 @@ async function handleTanya(c: AiContext): Promise<Response> {
 
   const konteks = await ambilKonteksPerangkat(db, idPengguna, idPemeriksaan);
   const dibuatPada = new Date().toISOString();
-  const sisaSesudahSimpan = Math.max(0, statusBatas.sisa - 1);
+  // statusBatas sudah sesudah cadangan: sisa ini sudah memotong
+  // pertanyaan yang sedang berjalan.
+  const sisaSesudahSimpan = statusBatas.sisa;
+  const sisaSesudahLepas = Math.min(BATAS_AI_HARIAN, statusBatas.sisa + 1);
 
   // Lapisan 1: cache jawaban ai_cache (tanpa memanggil Gemini).
   // Kunci dihitung dari pertanyaan + id pengguna + sidik jari data
@@ -511,6 +521,8 @@ async function handleTanya(c: AiContext): Promise<Response> {
         dibuatPada,
       );
     } catch {
+      // Simpan gagal: lepaskan cadangan agar kuota tidak terpotong.
+      await lepaskanKuotaAi(db, jendelaKuota);
       return jawabGalat(
         c,
         503,
@@ -553,7 +565,9 @@ async function handleTanya(c: AiContext): Promise<Response> {
         );
       }
       // Lapisan 3: fallback aturan tanpa AI. Jawaban fallback
-      // TIDAK disimpan ke riwayat dan tidak memotong kuota harian.
+      // TIDAK disimpan ke riwayat dan tidak memotong kuota harian:
+      // cadangan yang sudah dibuat dilepas kembali.
+      await lepaskanKuotaAi(db, jendelaKuota);
       const jawabanAturan = susunJawabanAturan(pertanyaan, konteks);
       return jawabSukses(c, {
         id: null,
@@ -563,7 +577,7 @@ async function handleTanya(c: AiContext): Promise<Response> {
         jawaban: jawabanAturan,
         dibuat_pada: dibuatPada,
         sumber_jawaban: 'aturan' as SumberJawaban,
-        sisa_hari_ini: statusBatas.sisa,
+        sisa_hari_ini: sisaSesudahLepas,
         label_saran: LABEL_SARAN,
         tersimpan: false,
       });
@@ -582,9 +596,8 @@ async function handleTanya(c: AiContext): Promise<Response> {
   await tulisCache(db, kunciCache, jawaban);
 
   // Simpan Q&A ke ai_diagnoses. Bila simpan gagal, jawaban tidak
-  // dikembalikan agar riwayat tetap konsisten (pengguna dapat
-  // mengulang tanpa kuota terpotong, karena kuota dihitung dari
-  // baris yang tersimpan).
+  // dikembalikan agar riwayat tetap konsisten; cadangan kuota
+  // dilepas sehingga pengguna dapat mengulang tanpa kuota terpotong.
   const idDiagnosis = crypto.randomUUID();
   try {
     await simpanDiagnosis(
@@ -597,6 +610,7 @@ async function handleTanya(c: AiContext): Promise<Response> {
       dibuatPada,
     );
   } catch {
+    await lepaskanKuotaAi(db, jendelaKuota);
     return jawabGalat(
       c,
       503,
@@ -704,7 +718,7 @@ export const aiRoutes = new Hono<{
   Variables: AiVariables;
 }>();
 
-aiRoutes.use('/api/ai/*', wajibMasuk);
+aiRoutes.use('/api/ai/*', wajibMasuk, batasLaju);
 // Endpoint kanonis (K-37).
 aiRoutes.post('/api/ai/diagnose', handleTanya);
 aiRoutes.get('/api/ai/diagnoses', handleRiwayat);

@@ -94,7 +94,7 @@ test.describe('Masuk Google (manual — lihat checklist di atas)', () => {
     page,
   }) => {
     await page.goto('/masuk');
-    await page.getByRole('button', { name: /masuk dengan google/i }).click();
+    await page.getByRole('link', { name: /masuk dengan google/i }).click();
     // Langkah selanjutnya terjadi di layar Google (di luar kendali tes).
     await expect(page).toHaveURL(/\/dashboard/);
     await page.reload();

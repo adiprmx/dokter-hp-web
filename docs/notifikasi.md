@@ -177,7 +177,7 @@ pemeriksaan yang sudah tercatat di tabel ini.
 
 Basis URL sama dengan API lain (lihat `ARCHITECTURE.md` bagian 3).
 Semua respons memakai envelope JSON standar proyek. Endpoint
-berlangganan memakai cookie sesi yang sama (`dokter_hp_session`).
+berlangganan memakai cookie sesi yang sama (`__Host-dokter_hp_session`).
 
 ### 4.1 Daftar endpoint
 

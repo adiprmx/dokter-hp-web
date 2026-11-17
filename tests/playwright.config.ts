@@ -47,7 +47,11 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   timeout: 30_000,
   expect: {
-    timeout: 5_000,
+    // 15 detik (naik dari 5 detik, perbaikan QA Wave 4): di VM bersama,
+    // pemeriksaan sesi + muat chunk malas bisa memakan 6–12 detik,
+    // sehingga batas 5 detik menimbulkan kegagalan palsu berulang
+    // pada tes yang halamannya sebenarnya termuat dengan benar.
+    timeout: 15_000,
   },
   use: {
     baseURL,

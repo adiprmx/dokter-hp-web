@@ -365,7 +365,12 @@ export default function KunciPinPage() {
           void kirimPin();
         }}
       >
-        <fieldset>
+        {/* BUG-01 (QA Wave 4): <fieldset> bawaan punya
+            min-width: min-content, sehingga 8 kotak digit tidak bisa
+            mengecil dan fieldset melebar sampai 2448px (overflow
+            horizontal parah). min-w-0 mengizinkan fieldset menyusut
+            mengikuti wadahnya; tiap input sudah min-w-0 flex-1. */}
+        <fieldset className="min-w-0">
           <legend className="text-sm font-medium text-zinc-100">PIN</legend>
           <div className="mt-3 flex gap-2">
             {digit.map((nilai, indeks) => (

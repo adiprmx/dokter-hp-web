@@ -18,6 +18,7 @@ import {
   type AppEnv,
 } from '../auth/middleware';
 import { buatCookieHapusSesi } from '../auth/session';
+import { ambilWaktuBukaSesi, apakahWaktuDalamTenggang } from '../auth/pin';
 import {
   cursorClause,
   nowIso,
@@ -40,6 +41,7 @@ import {
   balasSukses,
   bungkus,
   konfirmasiSalah,
+  loginUlangDiperlukan,
   terlaluSering,
   tidakDitemukan,
   tidakValid,
@@ -347,7 +349,10 @@ accountRoutes.get(
 );
 
 // DELETE /account — hapus akun + seluruh data milik pengguna.
-// Wajib konfirmasi badan { "konfirmasi": "HAPUS" } atau "DELETE" (K-26).
+// Wajib konfirmasi badan { "konfirmasi": "HAPUS" } atau "DELETE" (K-26)
+// DAN autentikasi baru ≤ 10 menit (K-72, R-09): sesi dibuat segar
+// (login Google) atau PIN baru dibuka. Bila tidak segar, 403
+// LOGIN_ULANG_DIPERLUKAN — pengguna diminta masuk lagi.
 accountRoutes.delete(
   '/account',
   bungkus<AppEnv>(async (c) => {
@@ -361,6 +366,30 @@ accountRoutes.delete(
     }
     const profil = await ambilProfil(c.env.DB, userId);
     const db = c.env.DB;
+    // K-72: cek autentikasi baru. Urutan: konfirmasi teks dulu
+    // (di atas), lalu cek segar — agar galat konfirmasi tidak
+    // tertutup galat autentikasi.
+    const sessionId = getSessionId(c);
+    let segar = false;
+    try {
+      const sesi = await queryOne<{ dibuat_pada: string | null }>(
+        db,
+        'SELECT dibuat_pada FROM sessions WHERE id = ? AND user_id = ?',
+        sessionId,
+        userId,
+      );
+      segar = apakahWaktuDalamTenggang(sesi?.dibuat_pada ?? null);
+    } catch {
+      // Gagal baca sesi = tidak segar.
+    }
+    if (!segar) {
+      // Buka PIN segar di sesi ini juga memenuhi syarat.
+      const dibukaPada = await ambilWaktuBukaSesi(db, sessionId);
+      segar = apakahWaktuDalamTenggang(dibukaPada);
+    }
+    if (!segar) {
+      throw loginUlangDiperlukan();
+    }
     // Upaya aktifkan cascade (best-effort); penghapusan di bawah ini
     // tetap eksplisit agar tidak bergantung pada PRAGMA.
     try {
@@ -407,10 +436,21 @@ accountRoutes.delete(
     await runQuery(db, 'DELETE FROM wifi_reports WHERE user_id = ?', userId);
     await runQuery(db, 'DELETE FROM health_checks WHERE user_id = ?', userId);
     await runQuery(db, 'DELETE FROM sessions WHERE user_id = ?', userId);
+    // 3b. Baris rate limit milik pengguna (R-14): kunci per-pengguna
+    // berbentuk "cakupan:userId:jendela". Kunci per-IP tidak dapat
+    // dikaitkan ke pengguna dan tidak dihapus (didokumentasikan
+    // sebagai risiko diterima di ARCHITECTURE.md §9).
+    try {
+      await runQuery(db, 'DELETE FROM rate_limits WHERE kunci LIKE ?', `%:${userId}:%`);
+    } catch {
+      // Abaikan — tabel rate_limits mungkin belum ada di DB lama.
+    }
     // 4. Profil, lalu pengguna.
     await runQuery(db, 'DELETE FROM profiles WHERE id = ?', userId);
     const berubah = await runQuery(db, 'DELETE FROM users WHERE id = ?', userId);
     if (berubah === 0) throw tidakDitemukan('Akun');
+    // Log audit server: hanya id pengguna (UUID, bukan data pribadi).
+    console.info(`[account] Akun dihapus: ${userId}`);
     c.header('Set-Cookie', buatCookieHapusSesi());
     return balasSukses(c, { deleted: true, email: profil.email });
   }),

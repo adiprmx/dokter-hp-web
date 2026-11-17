@@ -96,7 +96,7 @@ describe('mount router (K-07)', () => {
   });
 });
 
-describe('CORS (K-49)', () => {
+describe('CORS (K-49, K-73)', () => {
   it('preflight mengembalikan origin yang dikonfigurasi + credentials', async () => {
     const res = await app.request(
       '/api/health',
@@ -113,7 +113,113 @@ describe('CORS (K-49)', () => {
     expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
   });
 
-  it('tanpa ALLOWED_ORIGIN, origin pemanggil di-echo (bukan "*")', async () => {
+  it('origin asing tidak mendapat header ACAO bila ALLOWED_ORIGIN diatur (R-01)', async () => {
+    const res = await app.request(
+      '/api/health',
+      {
+        method: 'OPTIONS',
+        headers: {
+          Origin: ASAL_JAHAT,
+          'Access-Control-Request-Method': 'GET',
+        },
+      },
+      env({ ALLOWED_ORIGIN: ASAL }) as never,
+    );
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
+  it('tanpa ALLOWED_ORIGIN, origin asing TIDAK mendapat header ACAO (fail-closed, K-73a)', async () => {
+    const res = await app.request(
+      '/api/health',
+      {
+        method: 'OPTIONS',
+        headers: {
+          Origin: ASAL_JAHAT,
+          'Access-Control-Request-Method': 'GET',
+        },
+      },
+      env() as never,
+    );
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+
+  it('tanpa ALLOWED_ORIGIN, origin loopback diizinkan (pengembangan lokal)', async () => {
+    const res = await app.request(
+      '/api/health',
+      {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'http://localhost:5173',
+          'Access-Control-Request-Method': 'GET',
+        },
+      },
+      env() as never,
+    );
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173');
+    expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+  });
+
+  it('ALLOWED_ORIGIN multi-origin (koma) mengizinkan setiap origin dalam daftar (K-73c)', async () => {
+    const kedua = 'https://pratinjau.contoh.test';
+    for (const asal of [ASAL, kedua]) {
+      const res = await app.request(
+        '/api/health',
+        {
+          method: 'OPTIONS',
+          headers: {
+            Origin: asal,
+            'Access-Control-Request-Method': 'GET',
+          },
+        },
+        env({ ALLOWED_ORIGIN: `${ASAL}, ${kedua}` }) as never,
+      );
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe(asal);
+    }
+    const asing = await app.request(
+      '/api/health',
+      {
+        method: 'OPTIONS',
+        headers: {
+          Origin: ASAL_JAHAT,
+          'Access-Control-Request-Method': 'GET',
+        },
+      },
+      env({ ALLOWED_ORIGIN: `${ASAL}, ${kedua}` }) as never,
+    );
+    expect(asing.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  });
+});
+
+describe('header keamanan (R-08)', () => {
+  const HEADER_WAJIB = [
+    'Content-Security-Policy',
+    'Strict-Transport-Security',
+    'X-Content-Type-Options',
+    'Referrer-Policy',
+    'Permissions-Policy',
+  ];
+
+  it('respons API biasa membawa seluruh header keamanan', async () => {
+    const res = await app.request('/api/health');
+    expect(res.status).toBe(200);
+    for (const nama of HEADER_WAJIB) {
+      expect(res.headers.get(nama), nama).not.toBeNull();
+    }
+    expect(res.headers.get('Content-Security-Policy')).toContain("default-src 'self'");
+    expect(res.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
+    expect(res.headers.get('Content-Security-Policy')).not.toContain('lh3.googleusercontent.com');
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(res.headers.get('Permissions-Policy')).toContain('camera=()');
+  });
+
+  it('CSP memuat hash SHA-256 blok JSON-LD statis (N-01, K-82)', async () => {
+    const res = await app.request('/api/health');
+    expect(res.headers.get('Content-Security-Policy')).toContain(
+      "'sha256-4o/r21fqBN20SRxsbfoWC0l3DMnxsVrv+mxXnh+rxPM='",
+    );
+  });
+
+  it('preflight CORS membawa header keamanan', async () => {
     const res = await app.request(
       '/api/health',
       {
@@ -123,10 +229,36 @@ describe('CORS (K-49)', () => {
           'Access-Control-Request-Method': 'GET',
         },
       },
+      env({ ALLOWED_ORIGIN: ASAL }) as never,
+    );
+    for (const nama of HEADER_WAJIB) {
+      expect(res.headers.get(nama), nama).not.toBeNull();
+    }
+  });
+
+  it('respons 404 membawa header keamanan', async () => {
+    const res = await app.request('/api/tidak-ada');
+    expect(res.status).toBe(404);
+    for (const nama of HEADER_WAJIB) {
+      expect(res.headers.get(nama), nama).not.toBeNull();
+    }
+  });
+});
+
+describe('batas ukuran badan (R-20)', () => {
+  it('POST dengan badan di atas 100 KB ditolak 413 PAYLOAD_TOO_LARGE', async () => {
+    const res = await app.request(
+      '/api/health-checks',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teks: 'a'.repeat(110 * 1024) }),
+      },
       env() as never,
     );
-    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(ASAL);
-    expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('PAYLOAD_TOO_LARGE');
   });
 });
 
@@ -169,10 +301,21 @@ describe('cek Origin mutasi (K-50)', () => {
     expect(res.status).toBe(200);
   });
 
-  it('tanpa ALLOWED_ORIGIN, mutasi dengan Origin apa pun diteruskan', async () => {
+  it('tanpa ALLOWED_ORIGIN, mutasi dengan Origin asing ditolak 403 (fail-closed, K-73a)', async () => {
     const res = await app.request(
       '/api/health-checks',
       { method: 'POST', headers: { Origin: ASAL_JAHAT } },
+      env() as never,
+    );
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('FORBIDDEN');
+  });
+
+  it('tanpa ALLOWED_ORIGIN, mutasi dari loopback diteruskan ke auth', async () => {
+    const res = await app.request(
+      '/api/health-checks',
+      { method: 'POST', headers: { Origin: 'http://localhost:5173' } },
       env() as never,
     );
     expect(res.status).toBe(401);

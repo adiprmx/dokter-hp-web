@@ -62,8 +62,8 @@ yang diperbarui — bukan dari angka lama.
 | Kode | Asumsi | Nilai |
 |---|---|---|
 | A1 | Pengguna aktif harian (DAU) = pengguna yang masuk. Pengunjung anonim dihitung terpisah dengan rasio 1 anonim per 1 pengguna masuk | 1 : 1 |
-| A2 | Permintaan Worker per pengguna masuk per hari: `/auth/me` 1×, `GET /health-checks` 2×, `GET /wifi-reports` 1×, `POST /health-checks` 1×, `POST /wifi-reports` 1×, `POST .../samples` 0,3×, `POST /ai/diagnose` 0,5×, `GET /ai/diagnoses` 0,5×, profil 0,2×, lain-lain 0,2×, `/ping` 3× | 11 permintaan |
-| A3 | Permintaan Worker per pengunjung anonim per hari: 1 tes WiFi tanpa akun = `/ping` 3× | 3 permintaan |
+| A2 | Permintaan Worker per pengguna masuk per hari: `/api/auth/me` 1×, `GET /api/health-checks` 2×, `GET /api/wifi-reports` 1×, `POST /api/health-checks` 1×, `POST /api/wifi-reports` 1×, `POST .../samples` 0,3×, `POST /api/ai/diagnose` 0,5×, `GET /api/ai/diagnoses` 0,5×, profil 0,2×, lain-lain 0,2×, `/api/ping` 3× | 11 permintaan |
+| A3 | Permintaan Worker per pengunjung anonim per hari: 1 tes WiFi tanpa akun = `/api/ping` 3× | 3 permintaan |
 | A4 | Baris D1 dibaca per pengguna masuk per hari: cek sesi 11 baris + daftar riwayat (≤20 baris per daftar) + konteks AI 2 baris + detail laporan ±9 baris | ±100 baris |
 | A5 | Baris D1 ditulis per pengguna masuk per hari: 1 `health_checks` + 1 `wifi_reports` + 9 sampel (0,3 tes bertahan × 30 sampel) + 0,5 `ai_diagnoses` + 0,1 sesi + 0,5 penghitung rate limit | ±12 baris |
 | A6 | Ukuran baris baru: `health_checks` ±1 KB (JSON ringkasan), `wifi_reports` ±0,5 KB, 1 sampel ±0,1 KB, `ai_diagnoses` ±2 KB, sesi ±0,3 KB | ±3,5 KB per DAU per hari |
@@ -110,9 +110,9 @@ Konsumsi per DAU per hari = 11 (pengguna masuk, A2) + 3 (anonim, A3)
 | 1.000 DAU | 1.000 × 14 | 14.000 | 14% | |
 
 Penilaian: Workers aman di ketiga skenario. Risiko utama bukan
-pemakaian normal, melainkan penyalahgunaan endpoint `/ping` (tanpa
+pemakaian normal, melainkan penyalahgunaan endpoint `/api/ping` (tanpa
 batas ketat, tanpa D1) oleh bot — satu alamat IP yang memanggil
-`/ping` tanpa henti dapat menghabiskan kuota bersama. Mitigasi di
+`/api/ping` tanpa henti dapat menghabiskan kuota bersama. Mitigasi di
 bagian 4.4.
 
 ### 3.2 D1 — baris dibaca
@@ -317,10 +317,10 @@ bulanan (lihat bagian 5).
 
 ### 4.4 Workers — lindungi dari penyalahgunaan
 
-1. Rate limit `/ping` per alamat IP: maksimal 1 tes (3 panggilan)
+1. Rate limit `/api/ping` per alamat IP: maksimal 1 tes (3 panggilan)
    per menit per IP. Tes kecepatan yang sah tidak pernah memanggil
-   `/ping` lebih cepat dari itu.
-2. Cache di client: `/auth/me` dan data dashboard disimpan di store
+   `/api/ping` lebih cepat dari itu.
+2. Cache di client: `/api/auth/me` dan data dashboard disimpan di store
    Zustand dan tidak diambil ulang pada setiap pindah layar.
 3. Satu endpoint gabungan untuk dashboard (profil + skor terakhir +
    3 pemeriksaan terakhir) menggantikan 3–4 panggilan terpisah,

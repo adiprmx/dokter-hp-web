@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Logo Dokter HP">
+  <title>Logo Dokter HP</title>
+  <desc>Cincin putih dengan tanda plus di tengah dan dua belas strip meter di sekelilingnya.</desc>
+  <g fill="none" stroke="#FFFFFF" stroke-linecap="round">
+    <!-- Strip meter: 12 tick seperti skala alat ukur -->
+  <line x1="60.00" y1="13.00" x2="60.00" y2="3.00" stroke-width="4"/>
+  <line x1="85.00" y1="16.70" x2="88.00" y2="11.50" stroke-width="3"/>
+  <line x1="103.30" y1="35.00" x2="108.50" y2="32.00" stroke-width="3"/>
+  <line x1="107.00" y1="60.00" x2="117.00" y2="60.00" stroke-width="4"/>
+  <line x1="103.30" y1="85.00" x2="108.50" y2="88.00" stroke-width="3"/>
+  <line x1="85.00" y1="103.30" x2="88.00" y2="108.50" stroke-width="3"/>
+  <line x1="60.00" y1="107.00" x2="60.00" y2="117.00" stroke-width="4"/>
+  <line x1="35.00" y1="103.30" x2="32.00" y2="108.50" stroke-width="3"/>
+  <line x1="16.70" y1="85.00" x2="11.50" y2="88.00" stroke-width="3"/>
+  <line x1="13.00" y1="60.00" x2="3.00" y2="60.00" stroke-width="4"/>
+  <line x1="16.70" y1="35.00" x2="11.50" y2="32.00" stroke-width="3"/>
+  <line x1="35.00" y1="16.70" x2="32.00" y2="11.50" stroke-width="3"/>
+    <!-- Cincin -->
+    <circle cx="60" cy="60" r="34" stroke-width="5"/>
+    <!-- Tanda plus (identitas Dokter HP dari APK) -->
+    <path d="M60 46 L60 74 M46 60 L74 60" stroke-width="7"/>
+  </g>
+</svg>

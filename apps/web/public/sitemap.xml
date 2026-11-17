@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  sitemap.xml — Dokter HP Web App
+  Domain masih PLACEHOLDER (https://dokter-hp-web.pages.dev/).
+  Ganti seluruh URL dengan domain final saat domain diputuskan,
+  dan sesuaikan juga robots.txt + tag canonical di index.html.
+
+  Halaman panduan (/panduan/...) adalah rute yang diusulkan dokumen ini
+  (lihat docs/seo.md bagian 2). Bila tim frontend memakai rute berbeda,
+  perbarui file ini agar URL di sitemap sama persis dengan rute yang live.
+  Halaman aplikasi yang butuh login sengaja TIDAK masuk sitemap
+  (lihat robots.txt).
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://dokter-hp-web.pages.dev/</loc>
+    <lastmod>2026-11-17</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://dokter-hp-web.pages.dev/wifi</loc>
+    <lastmod>2026-11-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://dokter-hp-web.pages.dev/panduan/wifi-lemot</loc>
+    <lastmod>2026-11-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://dokter-hp-web.pages.dev/panduan/ganti-channel-router</loc>
+    <lastmod>2026-11-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://dokter-hp-web.pages.dev/panduan/ganti-dns</loc>
+    <lastmod>2026-11-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://dokter-hp-web.pages.dev/panduan/baterai-boros</loc>
+    <lastmod>2026-11-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://dokter-hp-web.pages.dev/panduan/penyimpanan-penuh</loc>
+    <lastmod>2026-11-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://dokter-hp-web.pages.dev/panduan/hp-lemot</loc>
+    <lastmod>2026-11-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://dokter-hp-web.pages.dev/panduan/keamanan-hp</loc>
+    <lastmod>2026-11-17</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+</urlset>

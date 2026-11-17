@@ -1,0 +1,9 @@
+/* Tema aplikasi: impor token desain "Alat ukur" dulu. Aturan CSS
+   mewajibkan @import di baris paling atas; Vite menempelkan isinya
+   saat build. Token adalah satu-satunya sumber warna dan gaya dasar:
+   latar hitam #000000, teks Zinc, fokus putih 2px (a11y.md 3.2). */
+@import "./styles/tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

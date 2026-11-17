@@ -1,0 +1,25 @@
+# robots.txt — Dokter HP Web App
+# Domain masih placeholder: ganti dokter-hp-web.pages.dev dengan domain final
+# saat domain diputuskan, dan sesuaikan juga sitemap.xml + canonical di index.html.
+
+User-agent: *
+Allow: /
+
+# Halaman aplikasi yang butuh login / berisi data pribadi pengguna —
+# tidak boleh diindeks mesin pencari.
+Disallow: /dashboard
+Disallow: /masuk
+Disallow: /kunci
+Disallow: /baterai
+Disallow: /penyimpanan
+Disallow: /performa
+Disallow: /keamanan
+Disallow: /ai
+Disallow: /riwayat
+Disallow: /pengaturan
+Disallow: /api/
+
+# File tes kecepatan (aset biner 1 MB) bukan konten — jangan diindeks.
+Disallow: /speedtest-1mb.bin
+
+Sitemap: https://dokter-hp-web.pages.dev/sitemap.xml

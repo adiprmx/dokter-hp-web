@@ -1,0 +1,23 @@
+{
+  "description": "Dokter HP Web App — pendamping web full-stack APK Dokter HP (diagnosis kesehatan HP, laporan WiFi, AI).",
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "name": "dokter-hp-web",
+  "private": true,
+  "scripts": {
+    "build": "npm run build --workspace=apps/web",
+    "build:all": "npm run build --workspace=apps/web && npm run typecheck --workspace=apps/api",
+    "dev": "npm run dev --workspace=apps/web",
+    "dev:api": "npm run dev --workspace=apps/api",
+    "preview": "npm run preview --workspace=apps/web",
+    "test": "npm run test --workspace=apps/web && npm run test --workspace=apps/api",
+    "typecheck": "npm run typecheck --workspace=apps/web && npm run typecheck --workspace=apps/api"
+  },
+  "type": "module",
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ]
+}

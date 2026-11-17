@@ -1,0 +1,20 @@
+# Konfigurasi Cloudflare Worker untuk API Dokter HP Web.
+name = "dokter-hp-api"
+main = "src/index.ts"
+compatibility_date = "2026-11-17"
+
+# Database D1. ID di bawah ini adalah PLACEHOLDER — tim deploy wajib
+# menggantinya dengan ID asli dari `wrangler d1 create dokter-hp-db`
+# sebelum deploy pertama. Pengembangan lokal (wrangler dev) memakai
+# D1 lokal dan menerapkan migrasi dari folder migrations/ secara otomatis.
+[[d1_databases]]
+binding = "DB"
+database_name = "dokter-hp-db"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+# KV minimal (misal: pembatas laju, cache singkat). ID placeholder —
+# ganti dengan ID asli dari `wrangler kv namespace create KV` bila dipakai.
+[[kv_namespaces]]
+binding = "KV"
+id = "00000000-0000-0000-0000-000000000000"

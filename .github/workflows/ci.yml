@@ -1,0 +1,33 @@
+# CI Dokter HP Web — build, typecheck, dan tes tanpa secret apa pun.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Siapkan Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Instal dependensi
+        run: npm ci
+
+      - name: Typecheck frontend dan API
+        run: npm run typecheck
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Tes unit frontend dan API
+        run: npm run test

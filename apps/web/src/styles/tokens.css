@@ -1,0 +1,204 @@
+/* Token desain "Alat ukur" untuk Dokter HP Web App.
+   Satu-satunya sumber token warna, tipografi, jarak, radius, dan gerak.
+   Nilai warna mengikuti docs/a11y.md bagian 4 (skala Zinc Tailwind);
+   setiap pasangan teks sudah dihitung rasionya dan lolos WCAG AA 4,5:1.
+   Cara pakai: tim scaffold mengimpor file ini di index.css setelah
+   direktif Tailwind. Komponen memakai token lewat var(), contoh:
+   bg-[var(--color-surface)]. */
+
+:root {
+  /* Permukaan: kanvas hitam murni sesuai design lock proyek. */
+  --color-bg: #000000;
+  --color-bg-alt: #09090b;
+  --color-surface: #121215;
+  --color-surface-raised: #18181b;
+  --color-surface-hover: #27272a;
+
+  /* Batas: Zinc 800 hanya garis dekoratif, bukan batas komponen.
+     Batas komponen interaktif wajib Zinc 500 (4,35:1, lolos 3:1). */
+  --color-border: #27272a;
+  --color-border-strong: #71717a;
+
+  /* Teks: tidak ada teks lebih gelap dari Zinc 400. Zinc 500 dan
+     Zinc 600 dilarang untuk teks (gagal 4,5:1, lihat a11y.md 4.4). */
+  --color-text-bright: #ffffff;
+  --color-text-primary: #f4f4f5;
+  --color-text-secondary: #d4d4d8;
+  --color-text-muted: #a1a1aa;
+  --color-text-placeholder: #a1a1aa;
+  --color-text-disabled: #a1a1aa;
+
+  /* Aksen: putih, satu-satunya aksen proyek. */
+  --color-accent: #ffffff;
+  --color-accent-text: #000000;
+
+  /* Status: warna hanya untuk fungsi/status, bukan dekorasi.
+     Varian teks (400) untuk teks di atas latar gelap; varian solid
+     (600/700) hanya dipakai dengan teks putih di atasnya. */
+  --color-success: #34d399;
+  --color-success-bg: rgb(52 211 153 / 0.12);
+  --color-success-border: rgb(52 211 153 / 0.45);
+  --color-success-solid: #047857;
+  --color-error: #f87171;
+  --color-error-bg: rgb(248 113 113 / 0.12);
+  --color-error-border: rgb(248 113 113 / 0.45);
+  --color-error-solid: #dc2626;
+  --color-warning: #facc15;
+  --color-warning-bg: rgb(250 204 21 / 0.12);
+  --color-warning-border: rgb(250 204 21 / 0.45);
+  --color-warning-solid: #b45309;
+  --color-info: #60a5fa;
+  --color-info-bg: rgb(96 165 250 / 0.12);
+  --color-info-border: rgb(96 165 250 / 0.45);
+  --color-info-solid: #2563eb;
+
+  /* Tipografi: font sistem, tanpa unduhan font (koneksi lemot).
+     Mono hanya untuk angka ukur, bukan kostum "teknis". */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Skala teks tetap (rem), bukan fluid: layar Operate dibaca pada DPI
+     yang konsisten dan judul tidak boleh mengecil di panel sempit. */
+  --text-display: 2rem;
+  --text-h1: 1.5rem;
+  --text-h2: 1.25rem;
+  --text-h3: 1.125rem;
+  --text-body: 1rem;
+  --text-small: 0.875rem;
+  --text-caption: 0.75rem;
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* Jarak: kelipatan 4px. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Radius: satu sistem. Pil hanya untuk cip status kecil. */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-pill: 999px;
+  --radius-focus: 4px;
+
+  /* Bayangan: hanya penanda elevasi (dialog, dropdown). Kartu datar. */
+  --shadow-elevated: 0 8px 24px rgb(0 0 0 / 0.5);
+
+  /* Gerak: cepat, hanya untuk umpan balik dan perubahan status. */
+  --duration-fast: 150ms;
+  --duration-medium: 250ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Lapisan: skala z-index yang didokumentasikan. */
+  --z-sticky: 10;
+  --z-dropdown: 20;
+  --z-modal: 30;
+  --z-toast: 40;
+
+  /* Target sentuh minimum proyek: 48 x 48 px. */
+  --tap-min: 48px;
+}
+
+/* Dasar halaman: tema gelap terkunci, satu tema untuk semua layar. */
+html {
+  color-scheme: dark;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Indikator fokus proyek (a11y.md 3.2): garis luar putih 2px,
+   jarak 2px, hanya untuk keyboard. */
+:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+  border-radius: var(--radius-focus);
+}
+
+/* Permukaan browser ikut memakai palet: seleksi, kursor teks,
+   dan scrollbar tidak memakai bawaan browser yang tidak nyambung. */
+::selection {
+  background-color: #ffffff;
+  color: #000000;
+}
+
+input,
+textarea {
+  caret-color: #ffffff;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-surface-hover);
+  border-radius: var(--radius-pill);
+}
+
+::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+/* Angka ukur: mono + angka tabular agar kolom angka sejajar. */
+.dh-numeric {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Kerangka muat: bentuknya meniru tata letak akhir, bukan spinner
+   generik di tengah konten. Kilau hanya hiasan gerak dan mati total
+   saat pengguna mengaktifkan kurangi gerakan. */
+.dh-skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--color-surface-raised);
+}
+
+.dh-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 0.06),
+    transparent
+  );
+  animation: dh-skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes dh-skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Kurangi gerakan (a11y.md 3.9): semua animasi dan transisi
+   dipersingkat sampai praktis hilang; nilai akhir tetap tampil. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

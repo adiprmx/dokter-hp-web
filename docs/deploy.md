@@ -1,11 +1,13 @@
 # Runbook Deploy: Dokter HP Web App
 
 > **Dokumen ini adalah runbook deploy Dokter HP Web App (full-stack).**
-> Bahasa: Bahasa Indonesia. Status: Fase 1 — dokumen, 17 November 2026.
+> Bahasa: Bahasa Indonesia. Status: Wave 5 — deploy v1.0 LIVE,
+> 18 November 2026 (D1 + KV + Worker + Pages dibuat dan terverifikasi).
 >
-> Dokumen ini hanya berisi rencana dan langkah deploy. **Tidak ada deploy
-> yang dilakukan saat dokumen ini ditulis.** Setiap langkah dijalankan
-> oleh tim deploy pada waktunya, mengikuti urutan di bagian 3.
+> Dokumen ini berisi rencana dan langkah deploy, diperbarui dengan
+> fakta deploy Wave 5 (bagian 9 memuat perintah deploy ulang persis).
+> Setiap langkah dijalankan oleh tim deploy pada waktunya, mengikuti
+> urutan di bagian 3.
 >
 > Dokumen pendamping: `PRODUCT.md` (spesifikasi produk),
 > `ARCHITECTURE.md` (arsitektur dan skema D1),
@@ -31,7 +33,7 @@ live 17 November 2026. Runbook ini disusun mengacu pada fakta-fakta ini.
 | Sumber token | File token `~/workspace/temp-mail/secrets/cf-api-token` (0600) |
 | Token vault `custom.cloudflare-workers` | **TIDAK VALID** (error 1000). Helper `cfw_api.py` **jangan dipakai**. |
 | Endpoint `/user/tokens/verify` | **Memberi negatif palsu** (error 1000) untuk token yang berfungsi ini. **Jangan menilai token dari endpoint verify.** Uji akses dengan panggilan baca fungsional (bagian 0.2). |
-| Izin tulis token | **Belum teruji** — verifikasi sejauh ini hanya baca. Langkah 0.3 adalah uji tulis pertama yang hati-hati. Bila uji tulis ditolak (403 / error 9109), hentikan deploy dan laporkan ke koordinator. |
+| Izin tulis token | **TERUJI LOLOS 18 Nov 2026 (Wave 5)** — D1 `dokter-hp-db`, namespace KV `KV`, Worker `dokter-hp-api`, dan proyek Pages `dokter-hp-web` berhasil dibuat via wrangler dengan token ini. |
 | Akun bersama | Akun ini juga menampung produksi lain: Atlys Mail v2, Laras web, Adip Cinema, KasBersama. **Wajib memakai nama Worker/D1/Pages baru yang unik; jangan menyentuh resource yang sudah ada.** Verifikasi nama belum terpakai sebelum membuat (langkah 0.4). |
 
 ### 0.2 Cara menguji akses Cloudflare (ganti verify)
@@ -71,6 +73,11 @@ ke koordinator. Jangan mencoba jalur lain tanpa persetujuan koordinator.
 
 Bila uji tulis lolos, lanjut ke bagian 1 dengan nama produksi.
 
+**Hasil Wave 5 (18 Nov 2026):** uji tulis dilakukan langsung dengan
+membuat resource produksi (`wrangler d1 create dokter-hp-db` +
+`wrangler kv namespace create KV`) — keduanya berhasil tanpa galat,
+jadi tidak dibuat database uji terpisah. Langkah 0.3 dinyatakan lolos.
+
 ### 0.4 Nama resource (baru, unik di akun bersama)
 
 | Resource | Nama yang dipakai | Keterangan |
@@ -92,15 +99,17 @@ mengubahnya** — pilih nama lain dan catat perubahan nama di dokumen ini.
 |---|---|
 | Kunci Gemini | **VALID** (HTTP 200, 50 model terdaftar). Siap dipakai sebagai secret Worker `GEMINI_API_KEY`. |
 | Vercel | **VALID** — akun adiprmx (`adiprmx@gmail.com`). Mirror siap dibuat. |
-| GitHub | **VALID** — akun adiprmx. Repo `adiprmx/dokter-hp-web` **belum ada**; dibuat oleh tim scaffold sebelum langkah Pages/Vercel. |
+| GitHub | **VALID** — akun adiprmx. Repo `adiprmx/dokter-hp-web` sudah ada (dibuat tim scaffold); main di snapshot 3 (5690ea46), CI hijau. |
 
 ### 0.6 Catatan alat
 
-- **Utamakan REST API Cloudflare via `cfw_t.py`.** Wrangler dari VM ini
-  belum teruji (kemungkinan tidak memakai proxy egress yang
-  menyelesaikan kredensial). Perintah wrangler di dokumen ini dicantumkan
-  sebagai alternatif bila wrangler terbukti berfungsi; jalur utama
-  selalu REST API.
+- **Wrangler TERBUKTI berfungsi dari VM ini (Wave 5, 18 Nov 2026):**
+  wrangler 4.164.0 di root repo (`node_modules/.bin/wrangler`) memakai
+  proxy egress dan token dari file (`CLOUDFLARE_API_TOKEN` dibaca dari
+  `~/workspace/temp-mail/secrets/cf-api-token`) — D1, KV, Worker, dan
+  Pages semuanya dibuat/di-deploy lewat wrangler. Jalur utama deploy
+  v1.0 adalah wrangler (bagian 9); REST API via `cfw_t.py` tetap
+  dipakai untuk baca/verifikasi.
 - Helper Vercel: `vercel_api.py` di
   `~/workspace/custom-connectors/custom.legacy-vercel/bin/`.
 - Helper GitHub: `gh_api.py` di
@@ -193,6 +202,14 @@ Hasil yang diharapkan: sebelas tabel terdaftar — `ai_cache`,
 Catat `database_id` dan tanggal migrasi di log deploy. Jangan menulis
 isi data pengguna ke log mana pun.
 
+**Fakta Wave 5 (18 Nov 2026):** `database_id`
+`6b43e7b2-ab24-48a4-abf9-ff8cae97f397` (region ENAM); migrasi
+0001–0004 diterapkan, 11 tabel aplikasi terverifikasi
+(`ai_cache`, `ai_diagnoses`, `health_checks`, `pin_attempts`,
+`pin_unlocks`, `profiles`, `rate_limits`, `sessions`, `users`,
+`wifi_reports`, `wifi_sustained_samples`) + 1 tabel internal
+Cloudflare `_cf_KV`.
+
 Catatan: migrasi berikutnya (bila ada) memakai file bernomor lanjut
 (`0002_...sql`) dan dijalankan dengan cara yang sama. Migrasi bersifat
 aditif dan kompatibel mundur — tidak ada `DROP TABLE` pada migrasi
@@ -217,6 +234,11 @@ python3 $CFW POST "/accounts/$ACCT/storage/kv/namespaces" -d '{"title":"dokter-h
 Catat namespace ID dari respons untuk binding Worker (bagian 1.3).
 Bila KV tidak dipakai, lewati bagian ini sepenuhnya — Worker tetap
 berjalan tanpa binding KV.
+
+**Fakta Wave 5 (18 Nov 2026):** namespace KV dibuat via
+`wrangler kv namespace create KV` — title `KV` (bukan
+`dokter-hp-cache` seperti rencana awal), id
+`347a1871fb464e92ac7e1e079134a062`, binding `KV` di `wrangler.toml`.
 
 ### 1.3 Worker: deploy script + bindings via API
 
@@ -320,6 +342,14 @@ curl -s https://dokter-hp-api.<subdomain>.workers.dev/api/ping
 
 Hasil yang diharapkan: HTTP 200 (lihat detail di bagian 4.1).
 
+**Fakta Wave 5 (18 Nov 2026):** Worker di-deploy via
+`wrangler deploy` dari `apps/api` (bukan upload REST API manual —
+wrangler membaca binding + vars dari `wrangler.toml`). URL API:
+`https://dokter-hp-api.hiroohengkerr.workers.dev`
+(subdomain akun: `hiroohengkerr`). Smoke test: `/api/health` 200
+(`"status":"ok"`), `/api/ping` 200, `/api/auth/status` 200
+(`google_tersedia:false` — jujur, OAuth belum ada, K-89).
+
 ### 1.4 Secret Worker
 
 Tiga secret wajib diatur sebagai secret Worker. Nilai secret **tidak
@@ -332,6 +362,13 @@ Nilai dimasukkan saat deploy dari sumber amannya masing-masing
 | `GEMINI_API_KEY` | Kunci Gemini yang sudah terverifikasi valid (Tim Verifikasi Kredensial, 17 Nov 2026) |
 | `GOOGLE_CLIENT_SECRET` | Google Cloud Console — client secret dari OAuth client yang dibuat untuk proyek ini |
 | `PIN_PEPPER` | Dibangkitkan acak saat deploy (minimal 32 byte, dari generator acak kriptografis); dipakai sebagai pepper HMAC-SHA256 untuk hash PIN (K-71). Bila tidak diatur, endpoint PIN mengembalikan 500 (fail-closed) |
+
+**Fakta Wave 5 (18 Nov 2026):** `GEMINI_API_KEY` + `PIN_PEPPER`
+diatur via `wrangler secret put` dari `apps/api`
+(`PIN_PEPPER` dibangkitkan baru dengan `openssl rand -hex 32`).
+`GOOGLE_CLIENT_SECRET` **TIDAK** diatur — OAuth client belum ada
+(K-89); aplikasi jalan dengan keadaan jujur
+(`/api/auth/status` → `google_tersedia:false`).
 
 **Cara mengatur (REST API):**
 
@@ -383,6 +420,18 @@ Prasyarat: repo GitHub `adiprmx/dokter-hp-web` sudah dibuat oleh tim
 scaffold dan berisi kode frontend (monorepo: frontend di `apps/web`).
 Bila scaffold memilih tata letak lain (frontend di root repo),
 sesuaikan `root_dir` di bawah.
+
+> **K-90 (Wave 5, 18 Nov 2026):** integrasi Git native dan GitHub
+> Actions **DITUNDA pasca-v1.0** (butuh OAuth dashboard / repo secret;
+> peluncuran live adalah prioritas; tidak ada double-deploy). Jalur
+> deploy Pages v1.0 = **deploy langsung via wrangler** (bagian 9).
+> Langkah 2–4 di bawah ini tetap berlaku bila integrasi Git native
+> diaktifkan nanti; untuk v1.0, proyek Pages dibuat tanpa `source`
+> GitHub (direct upload) dan di-deploy dengan
+> `wrangler pages deploy apps/web/dist --project-name=dokter-hp-web`.
+> **Fakta Wave 5:** proyek `dokter-hp-web` dibuat via
+> `wrangler pages project create dokter-hp-web`; URL produksi
+> `https://dokter-hp-web.pages.dev`.
 
 **Langkah 1 — Periksa proyek Pages yang sudah ada.**
 
@@ -561,15 +610,15 @@ sebelumnya. Jangan melompati tahap.
 | # | Tahap | Bagian | Gerbang lanjut |
 |---|---|---|---|
 | 0 | Verifikasi akses Cloudflare (baca fungsional, **bukan** `/user/tokens/verify`) | 0.2 | Panggilan baca berhasil |
-| 0 | Uji tulis pertama (database uji → tulis kecil → hapus) | 0.3 | Uji tulis lolos; bila gagal, hentikan dan laporkan |
+| 0 | Uji tulis pertama (buat D1 + KV produksi) | 0.3 | Uji tulis lolos; bila gagal, hentikan dan laporkan |
 | 0 | Pastikan repo `adiprmx/dokter-hp-web` sudah dibuat tim scaffold | 0.5 | Repo ada dan berisi kode |
 | 1 | Buat database D1 `dokter-hp-db` | 1.1 | `database_id` tercatat |
-| 2 | Jalankan migrasi `0001_init.sql` (6 kelompok) | 1.1 | 7 tabel terverifikasi |
+| 2 | Jalankan migrasi 0001–0004 | 1.1 | 11 tabel terverifikasi |
 | 3 | Buat namespace KV (hanya bila diputuskan perlu) | 1.2 | Namespace ID tercatat / dilewati dengan sadar |
-| 4 | Bangun bundle Worker dan upload + bindings D1/KV | 1.3 | Upload sukses; `/api/health` merespons |
-| 5 | Atur 3 secret Worker | 1.4 | Ketiga secret terdaftar |
+| 4 | Deploy Worker via `wrangler deploy` (binding + vars dari `wrangler.toml`) | 1.3, 9.1 | Deploy sukses; `/api/health` merespons |
+| 5 | Atur secret Worker (`GEMINI_API_KEY`, `PIN_PEPPER`; `GOOGLE_CLIENT_SECRET` ditunda, K-89) | 1.4 | Kedua secret terdaftar |
 | 6 | Aktifkan subdomain workers.dev; catat URL API | 1.3 | URL API tercatat |
-| 7 | Buat proyek Pages + sambung GitHub + build + env `VITE_API_BASE_URL` | 1.5 | Deploy pertama sukses |
+| 7 | Buat proyek Pages + build + deploy langsung via wrangler (K-90; Git native ditunda) | 1.5, 9 | Deploy pertama sukses |
 | 8 | Buat proyek Vercel + env yang sama | 2 | Deploy pertama sukses (`READY`) |
 | 9 | Verifikasi pasca-deploy di kedua mirror | 4 | Semua cek lolos |
 | 10 | Catat URL, ID resource, dan tanggal deploy di log deploy | — | Log lengkap |
@@ -778,6 +827,14 @@ dan menambahkan domain mirror Vercel ke `ALLOWED_ORIGIN` (dipisah
 koma) bila mirror dipakai. Setelah deploy, verifikasi CORS dengan
 preflight dari §4.4.
 
+**Fakta Wave 5 (18 Nov 2026):** placeholder SUDAH diganti dengan
+nilai asli — `ALLOWED_ORIGIN =
+"https://dokter-hp-web.pages.dev,https://dokter-hp-web.vercel.app"`
+(multi-origin K-73c), `FRONTEND_URL =
+"https://dokter-hp-web.pages.dev"`, `GOOGLE_REDIRECT_URI =
+"https://dokter-hp-api.hiroohengkerr.workers.dev/api/auth/google/callback"`,
+`GEMINI_MODEL = "gemini-3.5-flash-lite"`.
+
 ### 6.3 Worker — secret (secret_text, tidak pernah ke browser/repo)
 
 | Nama | Sumber | Wajib / opsional | Keterangan |
@@ -872,17 +929,18 @@ Catatan template:
 
 ## 8. Risiko dan catatan akhir
 
-1. **Izin tulis token Cloudflare belum teruji.** Uji tulis pertama
-   (bagian 0.3) adalah gerbang wajib. Bila gagal, seluruh deploy
-   berhenti sampai koordinator memutuskan langkah berikutnya.
+1. **Izin tulis token Cloudflare TERUJI LOLOS (Wave 5, 18 Nov 2026).**
+   Uji tulis pertama (bagian 0.3) lolos — D1, KV, Worker, dan Pages
+   berhasil dibuat. Bila suatu saat token ditolak tulis (403 /
+   error 9109), hentikan deploy dan laporkan ke koordinator.
 2. **Akun Cloudflare dipakai bersama produksi lain.** Nama resource
    baru wajib unik; dilarang mengubah atau menghapus resource yang
    sudah ada. Periksa daftar resource sebelum membuat yang baru.
 3. **Endpoint `/user/tokens/verify` memberi negatif palsu** untuk
    token ini. Penilaian kesehatan token memakai panggilan baca
    fungsional (bagian 0.2), bukan endpoint verify.
-4. **Repo GitHub belum ada.** Langkah Pages dan Vercel menunggu tim
-   scaffold membuat repo `adiprmx/dokter-hp-web`.
+4. **Repo GitHub sudah ada** (dibuat tim scaffold; main di snapshot 3,
+   CI hijau). Langkah Pages dan Vercel tidak lagi menunggu scaffold.
 5. **Google OAuth client belum dibuat.** `GOOGLE_CLIENT_ID` dan
    `GOOGLE_CLIENT_SECRET` membutuhkan OAuth client di Google Cloud
    Console (gratis, tanpa kartu) dengan redirect URI ke
@@ -890,9 +948,10 @@ Catatan template:
    bagian 1.3–1.4; bila belum ada, Worker tetap bisa di-deploy, tetapi
    login Google belum bisa diuji sampai client dibuat dan secret
    diatur.
-6. **Wrangler lokal teruji dari VM ini** (migrasi `--local` dan
-   `wrangler dev`, Wave 4). Deploy script Worker tetap memakai REST
-   API via `cfw_t.py` (bagian 1.3); migrasi D1 remote memakai
+6. **Wrangler teruji penuh dari VM ini** (Wave 5, 18 Nov 2026):
+   D1, KV, Worker, dan Pages semuanya di-deploy via wrangler
+   4.164.0. REST API via `cfw_t.py` tetap dipakai untuk
+   baca/verifikasi; migrasi D1 remote memakai
    `wrangler d1 migrations apply --remote` (bagian 1.1 langkah 3).
 7. **Kuota D1 free tier** (terverifikasi 17 Nov 2026): 5 juta baris
    dibaca/hari, 100 ribu baris ditulis/hari, 500 MB per database.
@@ -902,7 +961,97 @@ Catatan template:
    Jangan memindahkan sesi ke KV di kemudian hari tanpa meninjau
    ulang batas ini.
 
+## 9. Deploy ulang v1.0 (K-90)
+
+Jalur deploy v1.0 = **deploy langsung via wrangler** dari VM ini.
+Integrasi Git native Pages dan GitHub Actions **DITUNDA pasca-v1.0**
+(K-90: butuh OAuth dashboard / repo secret; peluncuran live adalah
+prioritas; tidak ada double-deploy). Perintah di bawah ini adalah
+perintah persis yang dipakai Wave 5 (18 Nov 2026) dan dipakai ulang
+untuk setiap deploy ulang.
+
+Prasyarat (sekali per shell):
+
+```bash
+export CLOUDFLARE_API_TOKEN="$(cat ~/workspace/temp-mail/secrets/cf-api-token)"
+export CLOUDFLARE_ACCOUNT_ID=05928ed4e4ed9643a5665d1e59315abe
+# Wrangler 4.164.0 di root repo:
+WR=~/workspace/projects/dokter-hp-web/node_modules/.bin/wrangler
+```
+
+### 9.1 Worker API (deploy ulang)
+
+```bash
+cd ~/workspace/projects/dokter-hp-web/apps/api
+$WR deploy
+# URL: https://dokter-hp-api.hiroohengkerr.workers.dev
+```
+
+### 9.2 Frontend Pages (deploy ulang)
+
+```bash
+cd ~/workspace/projects/dokter-hp-web
+VITE_API_BASE_URL=https://dokter-hp-api.hiroohengkerr.workers.dev npm run build
+$WR pages deploy apps/web/dist --project-name=dokter-hp-web
+# URL: https://dokter-hp-web.pages.dev
+```
+
+Proyek Pages dibuat sekali saja (sudah dibuat Wave 5):
+
+```bash
+$WR pages project create dokter-hp-web
+```
+
+### 9.3 Migrasi D1 (bila ada file migrasi baru)
+
+```bash
+cd ~/workspace/projects/dokter-hp-web/apps/api
+$WR d1 migrations apply dokter-hp-db --remote
+```
+
+### 9.4 Secret (bila perlu diatur ulang)
+
+```bash
+cd ~/workspace/projects/dokter-hp-web/apps/api
+$WR secret put GEMINI_API_KEY < ~/workspace/secrets/gemini-api-key.txt
+openssl rand -hex 32 | $WR secret put PIN_PEPPER   # HANYA sebelum ada PIN tersimpan (K-71)
+```
+
+`GOOGLE_CLIENT_SECRET` TIDAK diatur sampai OAuth client dibuat (K-89).
+Nilai secret tidak pernah dicetak ke log.
+
+### 9.5 Verifikasi pasca-deploy ulang
+
+```bash
+API=https://dokter-hp-api.hiroohengkerr.workers.dev
+curl -s $API/api/health        # 200, "status":"ok"
+curl -s $API/api/ping          # 200, "ok":true
+curl -s $API/api/auth/status   # 200, google_tersedia:false (sampai OAuth ada)
+curl -sI https://dokter-hp-web.pages.dev   # 200
+```
+
+---
+
 ## Changelog dokumen
+
+### 18 November 2026 — deploy v1.0 Wave 5 (Tim Deploy Cloudflare)
+
+- §0.1/§0.3: izin tulis token TERUJI LOLOS (D1 + KV + Worker +
+  Pages dibuat via wrangler); uji tulis memakai resource produksi.
+- §0.5/§0.6: repo sudah ada; wrangler 4.164.0 terbukti berfungsi
+  dari VM — jalur utama deploy v1.0.
+- §1.1/§1.2/§1.3/§1.4: fakta Wave 5 — `database_id`
+  `6b43e7b2-…`, KV id `347a1871…`, Worker
+  `https://dokter-hp-api.hiroohengkerr.workers.dev`, secret
+  `GEMINI_API_KEY` + `PIN_PEPPER` diatur, `GOOGLE_CLIENT_SECRET`
+  tidak diatur (K-89).
+- §1.5 + §9 (baru): K-90 — deploy Pages v1.0 via wrangler langsung;
+  integrasi Git native / GitHub Actions ditunda pasca-v1.0.
+  Perintah deploy ulang persis di §9.
+- §6.2: placeholder `wrangler.toml` sudah diganti nilai asli
+  (multi-origin K-73c).
+- §4.4: `connect-src` Pages dipersempit ke origin Worker persis
+  (K-78) — wildcard `*.workers.dev` dihapus dari `_headers`.
 
 ### 18 November 2026 — perbaikan keamanan Wave 4 (Tim Blue)
 

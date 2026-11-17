@@ -10,14 +10,14 @@ compatibility_date = "2026-11-17"
 [[d1_databases]]
 binding = "DB"
 database_name = "dokter-hp-db"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "6b43e7b2-ab24-48a4-abf9-ff8cae97f397"
 migrations_dir = "migrations"
 
 # KV minimal (misal: pembatas laju, cache singkat). ID placeholder —
 # ganti dengan ID asli dari `wrangler kv namespace create KV` bila dipakai.
 [[kv_namespaces]]
 binding = "KV"
-id = "00000000-0000-0000-0000-000000000000"
+id = "347a1871fb464e92ac7e1e079134a062"
 
 # Variabel lingkungan NON-RAHASIA (K-73, K-08). Nilai di bawah ini
 # adalah PLACEHOLDER yang mengarah ke domain Pages produksi; tim
@@ -27,7 +27,7 @@ id = "00000000-0000-0000-0000-000000000000"
 # lewat `wrangler secret put`. GOOGLE_REDIRECT_URI bukan rahasia
 # (terlihat di URL OAuth) sehingga boleh di [vars] sebagai placeholder.
 [vars]
-ALLOWED_ORIGIN = "https://dokter-hp-web.pages.dev"
+ALLOWED_ORIGIN = "https://dokter-hp-web.pages.dev,https://dokter-hp-web.vercel.app"
 FRONTEND_URL = "https://dokter-hp-web.pages.dev"
-GOOGLE_REDIRECT_URI = "https://dokter-hp-api.contoh.workers.dev/api/auth/google/callback"
+GOOGLE_REDIRECT_URI = "https://dokter-hp-api.hiroohengkerr.workers.dev/api/auth/google/callback"
 GEMINI_MODEL = "gemini-3.5-flash-lite"

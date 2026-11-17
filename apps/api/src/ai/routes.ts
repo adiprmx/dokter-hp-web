@@ -1,12 +1,14 @@
 // apps/api/src/ai/routes.ts
 // Rute Diagnosis AI (server-side, Hono).
 //
-// Endpoint utama (sesuai penugasan tim):
-//   POST /api/ai/tanya    — kirim pertanyaan ke Diagnosis AI
-//   GET  /api/ai/riwayat  — daftar tanya jawab milik pengguna
-// Alias sesuai ARCHITECTURE.md dan docs/api-contracts.md bagian 5:
-//   POST /ai/diagnose
-//   GET  /ai/diagnoses
+// Endpoint kanonis (keputusan koordinator K-37):
+//   POST /api/ai/diagnose  — kirim pertanyaan ke Diagnosis AI
+//   GET  /api/ai/diagnoses — daftar tanya jawab milik pengguna
+// Alias lama (tetap didukung):
+//   POST /api/ai/tanya
+//   GET  /api/ai/riwayat
+// Alias tanpa awalan /api (/ai/diagnose, /ai/diagnoses) DIHAPUS
+// (Wave 3b): semua endpoint memakai prefix /api (K-07).
 //
 // Autentikasi: rute ini mengharapkan variabel konteks `userId` sudah
 // diisi middleware sesi di entry Worker (index.ts) sebelum request
@@ -43,15 +45,16 @@
 //      (agar header "AI sedang tidak tersedia" tidak menjadi basi
 //      bila dibaca kembali nanti) dan tidak memotong kuota harian.
 //
-// Penyimpangan dari docs/api-contracts.md yang disengaja (diputuskan
-// penugasan tim / tindak lanjut riset free-tier; koordinator harap
-// memperbarui dokumen kontrak):
-//   - Pertanyaan dibatasi 1-1000 karakter (kontrak: 1-2000).
-//   - Kegagalan Gemini TIDAK lagi menjawab 502 AI_TIDAK_TERSEDIA,
-//     melainkan jawaban fallback 200 (sumber_jawaban "aturan").
+// Keputusan kanonis (Wave 3b; kontrak bagian 5 sudah diselaraskan):
+//   - Pertanyaan dibatasi 1-1000 karakter (K-36).
+//   - Kegagalan Gemini TIDAK menjawab 502 AI_TIDAK_TERSEDIA,
+//     melainkan jawaban fallback 200 (sumber_jawaban "aturan");
+//     kode 502 itu pensiun (K-23).
 //   - Respons sukses POST memuat objek diagnosis lengkap sesuai
 //     kontrak, ditambah field sumber_jawaban, sisa_hari_ini,
 //     label_saran, dan tersimpan.
+//   - Riwayat memakai paginasi cursor keyset (K-38), sama seperti
+//     semua endpoint daftar lain (K-32).
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
@@ -63,6 +66,14 @@ import { LABEL_SARAN, SYSTEM_PROMPT, buildUserMessage } from './prompt';
 import type { KonteksPerangkat } from './prompt';
 import { cekBatasAi } from './ratelimit';
 import type { DbD1 } from './ratelimit';
+import type { VariabelAuth } from '../auth/middleware';
+import {
+  cursorClause,
+  paginateRows,
+  parseCursorParam,
+  parseLimitParam,
+  type Cursor,
+} from '../lib/db';
 
 export type { DbD1 };
 
@@ -79,11 +90,14 @@ export interface AiBindings {
   GEMINI_MODEL?: string;
 }
 
-/** Variabel konteks Hono untuk rute AI. */
-export interface AiVariables {
-  /** Id pengguna dari sesi terverifikasi (diisi middleware sesi). */
-  userId?: string;
-}
+/**
+ * Variabel konteks Hono untuk rute AI: sama dengan VariabelAuth
+ * (diisi wajibLogin di entry Worker). Rute AI hanya membaca
+ * `userId`; tiga variabel lain diabaikan. Memakai tipe yang sama
+ * agar aiRoutes bisa dipasang di aplikasi utama tanpa cast
+ * (Hono mensyaratkan SubEnv extends Env saat route()).
+ */
+export type AiVariables = VariabelAuth;
 
 type AiContext = Context<{
   Bindings: AiBindings;
@@ -93,10 +107,6 @@ type AiContext = Context<{
 /** Panjang pertanyaan minimum dan maksimum (karakter, setelah trim). */
 export const PERTANYAAN_MIN_KARAKTER = 1;
 export const PERTANYAAN_MAKS_KARAKTER = 1000;
-
-/** Batas paginasi riwayat (kontrak 0.6: limit 1-100). */
-export const RIWAYAT_LIMIT_BAWAAN = 20;
-export const RIWAYAT_LIMIT_MAKS = 100;
 
 /** Asal jawaban yang dikembalikan ke pengguna. */
 export type SumberJawaban = 'ai' | 'cache' | 'aturan';
@@ -123,7 +133,7 @@ function jawabSukses(
 function jawabDaftar(
   c: AiContext,
   items: unknown[],
-  paginasi: { limit: number; offset: number; total: number },
+  paginasi: { limit: number; next_cursor: string | null; has_more: boolean },
 ): Response {
   return c.json({
     success: true,
@@ -132,9 +142,8 @@ function jawabDaftar(
       timestamp: stempelWaktu(),
       pagination: {
         limit: paginasi.limit,
-        offset: paginasi.offset,
-        total: paginasi.total,
-        has_more: paginasi.offset + items.length < paginasi.total,
+        next_cursor: paginasi.next_cursor,
+        has_more: paginasi.has_more,
       },
     },
   });
@@ -207,50 +216,28 @@ export function apakahUuidValid(nilai: string): boolean {
 }
 
 export type HasilPaginasi =
-  | { ok: true; limit: number; offset: number }
+  | { ok: true; limit: number; cursor: Cursor | null }
   | { ok: false; kode: string; pesan: string };
 
 /**
- * Mengurai parameter paginasi ?limit=&offset? sesuai kontrak 0.6:
- * limit bawaan 20, di luar 1-100 diklem ke batas terdekat;
- * limit/offset bukan angka -> galat; offset negatif -> galat.
+ * Mengurai parameter paginasi ?limit=&cursor= sesuai kontrak 0.6
+ * (cursor keyset, K-32/K-38): limit bawaan 20, di luar 1-100
+ * diklem ke batas terdekat; limit bukan angka -> galat; cursor
+ * cacat -> galat (bukan diam-diam halaman pertama).
  */
 export function parsePaginasi(query: {
   limit?: string | undefined;
-  offset?: string | undefined;
+  cursor?: string | undefined;
 }): HasilPaginasi {
-  let limit = RIWAYAT_LIMIT_BAWAAN;
-  if (query.limit !== undefined) {
-    const teks = query.limit.trim();
-    if (!/^-?\d+$/.test(teks)) {
-      return {
-        ok: false,
-        kode: 'VALIDATION_ERROR',
-        pesan: 'Parameter limit tidak valid.',
-      };
-    }
-    const angka = Number.parseInt(teks, 10);
-    limit = Math.min(Math.max(angka, 1), RIWAYAT_LIMIT_MAKS);
+  const limitHasil = parseLimitParam(query.limit);
+  if (!limitHasil.ok) {
+    return { ok: false, kode: 'VALIDATION_ERROR', pesan: limitHasil.message };
   }
-  let offset = 0;
-  if (query.offset !== undefined) {
-    if (!/^-?\d+$/.test(query.offset.trim())) {
-      return {
-        ok: false,
-        kode: 'VALIDATION_ERROR',
-        pesan: 'Parameter offset tidak valid.',
-      };
-    }
-    offset = Number.parseInt(query.offset.trim(), 10);
-    if (offset < 0) {
-      return {
-        ok: false,
-        kode: 'VALIDATION_ERROR',
-        pesan: 'Parameter offset tidak boleh negatif.',
-      };
-    }
+  const cursorHasil = parseCursorParam(query.cursor);
+  if (!cursorHasil.ok) {
+    return { ok: false, kode: 'VALIDATION_ERROR', pesan: cursorHasil.message };
   }
-  return { ok: true, limit, offset };
+  return { ok: true, limit: limitHasil.value, cursor: cursorHasil.value };
 }
 
 /**
@@ -411,7 +398,7 @@ async function simpanDiagnosis(
 }
 
 async function handleTanya(c: AiContext): Promise<Response> {
-  const idPengguna = c.get('userId') as string;
+  const idPengguna = c.get('userId');
   const db = c.env.DB;
 
   let badan: BadanTanya;
@@ -557,6 +544,14 @@ async function handleTanya(c: AiContext): Promise<Response> {
     });
   } catch (galat) {
     if (galat instanceof GalatGemini) {
+      // Kuota proyek habis (kedua model menjawab 429) dicatat ke
+      // log Worker agar terlihat di observabilitas; pertanyaan dan
+      // data pengguna TIDAK dicatat.
+      if (galat.kode === 'GEMINI_KUOTA_HABIS') {
+        console.warn(
+          '[ai] Kuota Gemini habis (kedua model 429); fallback aturan dipakai.',
+        );
+      }
       // Lapisan 3: fallback aturan tanpa AI. Jawaban fallback
       // TIDAK disimpan ke riwayat dan tidak memotong kuota harian.
       const jawabanAturan = susunJawabanAturan(pertanyaan, konteks);
@@ -638,42 +633,30 @@ interface BarisRiwayat {
 }
 
 async function handleRiwayat(c: AiContext): Promise<Response> {
-  const idPengguna = c.get('userId') as string;
+  const idPengguna = c.get('userId');
   const db = c.env.DB;
   const paginasi = parsePaginasi({
     limit: c.req.query('limit'),
-    offset: c.req.query('offset'),
+    cursor: c.req.query('cursor'),
   });
   if (!paginasi.ok) {
     return jawabGalat(c, 400, paginasi.kode, paginasi.pesan);
   }
-  const { limit, offset } = paginasi;
+  const { limit, cursor } = paginasi;
 
   try {
-    const totalBaris = await db
-      .prepare(
-        'SELECT COUNT(*) AS jumlah FROM ai_diagnoses WHERE user_id = ?',
-      )
-      .bind(idPengguna)
-      .first<{ jumlah?: unknown }>();
-    const totalMentah = totalBaris?.jumlah;
-    const total =
-      typeof totalMentah === 'number'
-        ? totalMentah
-        : typeof totalMentah === 'string'
-          ? Number.parseInt(totalMentah, 10) || 0
-          : 0;
-
+    const klausul = cursorClause(cursor);
     const hasil = await db
       .prepare(
         'SELECT id, user_id, pertanyaan, jawaban, health_check_id, dibuat_pada ' +
           'FROM ai_diagnoses WHERE user_id = ? ' +
-          'ORDER BY dibuat_pada DESC LIMIT ? OFFSET ?',
+          klausul.sql +
+          ' ORDER BY dibuat_pada DESC, id DESC LIMIT ?',
       )
-      .bind(idPengguna, limit, offset)
+      .bind(idPengguna, ...klausul.params, limit + 1)
       .all<BarisRiwayat>();
 
-    const items = (hasil.results ?? []).map((baris) => ({
+    const semua = (hasil.results ?? []).map((baris) => ({
       id: typeof baris.id === 'string' ? baris.id : '',
       user_id: typeof baris.user_id === 'string' ? baris.user_id : idPengguna,
       pertanyaan:
@@ -687,7 +670,8 @@ async function handleRiwayat(c: AiContext): Promise<Response> {
         typeof baris.dibuat_pada === 'string' ? baris.dibuat_pada : '',
     }));
 
-    return jawabDaftar(c, items, { limit, offset, total });
+    const { items, meta } = paginateRows(semua, limit);
+    return jawabDaftar(c, items, meta);
   } catch {
     return jawabGalat(
       c,
@@ -706,15 +690,14 @@ async function handleRiwayat(c: AiContext): Promise<Response> {
  * Rute Diagnosis AI. Dipasang di entry Worker (index.ts), misalnya:
  *
  *   import { aiRoutes } from './ai/routes';
- *   app.use('/api/ai/*', middlewareSesi); // mengisi c.set('userId', ...)
- *   app.use('/ai/*', middlewareSesi);
+ *   app.use('/api/ai/*', authMiddleware); // mengisi c.set('userId', ...)
  *   app.route('/', aiRoutes);
  *
- * Rute memakai path absolut (termasuk awalan /api/ai atau /ai),
- * sehingga dipasang di root — bukan di bawah apiRouter (yang sudah
- * dipasang di /api). Middleware sesi (tim Auth) wajib mengisi
- * variabel `userId` dari token sesi terverifikasi dan menolak sesi
- * terkunci PIN sebelum request mencapai rute ini.
+ * Rute memakai path absolut (termasuk awalan /api/ai), sehingga
+ * dipasang di root — bukan di bawah apiRouter (yang sudah dipasang
+ * di /api). Middleware sesi (tim Auth) wajib mengisi variabel
+ * `userId` dari token sesi terverifikasi dan menolak sesi terkunci
+ * PIN sebelum request mencapai rute ini.
  */
 export const aiRoutes = new Hono<{
   Bindings: AiBindings;
@@ -722,9 +705,9 @@ export const aiRoutes = new Hono<{
 }>();
 
 aiRoutes.use('/api/ai/*', wajibMasuk);
-aiRoutes.use('/ai/*', wajibMasuk);
+// Endpoint kanonis (K-37).
+aiRoutes.post('/api/ai/diagnose', handleTanya);
+aiRoutes.get('/api/ai/diagnoses', handleRiwayat);
+// Alias lama (tetap didukung).
 aiRoutes.post('/api/ai/tanya', handleTanya);
 aiRoutes.get('/api/ai/riwayat', handleRiwayat);
-// Alias sesuai ARCHITECTURE.md bagian 3.4 + api-contracts.md bagian 5.
-aiRoutes.post('/ai/diagnose', handleTanya);
-aiRoutes.get('/ai/diagnoses', handleRiwayat);

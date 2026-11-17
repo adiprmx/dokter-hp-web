@@ -1,11 +1,9 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  GalatApi,
   PESAN_PIN_TIDAK_VALID,
   PIN_KUNCI_DETIK,
   buatUrlMasukGoogle,
   kodeGalatApi,
-  panggilApi,
   parseResponsKunciPin,
   parseSisaPercobaan,
   pesanGalatApi,
@@ -16,8 +14,8 @@ import {
 } from "./pin";
 
 // Tes unit logika PIN dan galat autentikasi (docs/api-contracts.md
-// grup Auth Google + PIN). Semua fungsi yang diuji adalah fungsi murni,
-// kecuali panggilApi yang diuji dengan fetch yang diganti (stub).
+// grup Auth Google + PIN). Semua fungsi yang diuji adalah fungsi
+// murni. Klien HTTP (panggilApi/ApiError) diuji di api.test.ts.
 
 describe("validasiFormatPin", () => {
   it("menerima PIN 4 sampai 8 digit", () => {
@@ -268,108 +266,5 @@ describe("buatUrlMasukGoogle", () => {
     expect(buatUrlMasukGoogle("https://jahat.example.com")).toMatch(
       /\/api\/auth\/google\?redirect=%2Fdashboard$/,
     );
-  });
-});
-
-describe("GalatApi", () => {
-  it("membawa status, kode, pesan, dan badan mentah", () => {
-    const badan = {
-      success: false,
-      error: { code: "PIN_SALAH", message: "PIN salah." },
-    };
-    const galat = new GalatApi(401, "PIN_SALAH", "PIN salah.", badan);
-    expect(galat).toBeInstanceOf(Error);
-    expect(galat.name).toBe("GalatApi");
-    expect(galat.status).toBe(401);
-    expect(galat.kode).toBe("PIN_SALAH");
-    expect(galat.message).toBe("PIN salah.");
-    expect(galat.badan).toBe(badan);
-  });
-});
-
-describe("panggilApi", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("mengembalikan data dari envelope sukses dan mengirim cookie sesi", async () => {
-    const respons = {
-      ok: true,
-      status: 200,
-      json: async () => ({ success: true, data: { valid: true } }),
-    } as unknown as Response;
-    const fetchMock = vi.fn(async () => respons);
-    vi.stubGlobal("fetch", fetchMock);
-
-    const data = await panggilApi<{ valid: boolean }>(
-      "/api/auth/pin/verify",
-      { method: "POST", body: { pin: "1234" } },
-    );
-
-    expect(data).toEqual({ valid: true });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const panggilan = fetchMock.mock.calls[0] as unknown as [
-      string,
-      RequestInit,
-    ];
-    expect(panggilan[0]).toBe("/api/auth/pin/verify");
-    expect(panggilan[1].method).toBe("POST");
-    expect(panggilan[1].credentials).toBe("include");
-    expect(panggilan[1].headers).toEqual({
-      "Content-Type": "application/json",
-    });
-    expect(panggilan[1].body).toBe(JSON.stringify({ pin: "1234" }));
-  });
-
-  it("melempar GalatApi dengan kode dan badan saat respons gagal", async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: false,
-      status: 401,
-      json: async () => ({
-        success: false,
-        error: {
-          code: "PIN_SALAH",
-          message: "PIN salah. Coba lagi.",
-          details: { sisa_percobaan: 3 },
-        },
-      }),
-    }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(
-      panggilApi("/api/auth/pin/verify", {
-        method: "POST",
-        body: { pin: "0000" },
-      }),
-    ).rejects.toMatchObject({ status: 401, kode: "PIN_SALAH" });
-
-    try {
-      await panggilApi("/api/auth/pin/verify", {
-        method: "POST",
-        body: { pin: "0000" },
-      });
-      expect.unreachable();
-    } catch (galat) {
-      expect(galat).toBeInstanceOf(GalatApi);
-      // Badan mentah tetap bisa diurai pemilah PIN.
-      expect(parseSisaPercobaan((galat as GalatApi).badan)).toBe(3);
-    }
-  });
-
-  it("memakai pesan galat umum bila badan respons tidak bisa dibaca", async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: false,
-      status: 500,
-      json: async () => {
-        throw new Error("bukan JSON");
-      },
-    }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(panggilApi("/api/auth/me")).rejects.toMatchObject({
-      status: 500,
-      kode: null,
-      message: "Terjadi kesalahan. Coba lagi.",
-    });
   });
 });

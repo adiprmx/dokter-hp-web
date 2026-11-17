@@ -34,18 +34,21 @@ export type KunciKomponen =
 
 export interface HealthCheck {
   id: string;
-  user_id: string;
+  // Field di bawah tidak dibawa proyeksi ringkas GET /api/history
+  // (kontrak §7) dan tidak pernah ditampilkan — opsional agar entri
+  // dari /api/history bisa dipakai tanpa mengarang nilai.
+  user_id?: string;
   skor: number;
   ringkasan: Partial<Record<KunciKomponen, KomponenRingkasan>>;
   dibuat_pada: string;
-  updated_at: string;
-  deleted_at: string | null;
+  updated_at?: string;
+  deleted_at?: string | null;
   sync_status: "pending" | "synced" | "failed";
 }
 
 export interface WifiReport {
   id: string;
-  user_id: string;
+  user_id?: string;
   ssid: string | null;
   kecepatan_koneksi_mbps: number | null;
   kekuatan_sinyal: "lemah" | "sedang" | "kuat" | null;
@@ -57,13 +60,13 @@ export interface WifiReport {
   sumber: SumberData;
   durasi_tes_detik: number | null;
   dibuat_pada: string;
-  updated_at: string;
-  deleted_at: string | null;
+  updated_at?: string;
+  deleted_at?: string | null;
 }
 
 export interface AiDiagnosis {
   id: string;
-  user_id: string;
+  user_id?: string;
   health_check_id: string | null;
   pertanyaan: string;
   jawaban: string;

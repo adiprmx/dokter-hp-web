@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchJson } from "../lib/api";
+import { checkApiHealth, panggilApi } from "../lib/api";
 import {
   DURASI_TES_BERTAHAN_DETIK,
   GalatTes,
@@ -31,7 +31,7 @@ import {
   type KlasifikasiKecepatan,
   type SampelBertahan,
 } from "../lib/speedtest";
-import GrafikBertahan from "../components/wifi/GrafikBertahan";
+import { SustainedChart } from "../components/charts/SustainedChart";
 import RekomendasiWifi, {
   rangkumRekomendasi,
   type MasukanRekomendasi,
@@ -122,22 +122,6 @@ function formatTanggal(d: Date | string): string {
 }
 
 /** Membuka envelope API { success, data } atau memakai JSON apa adanya. */
-function bukaData<T>(json: unknown): T {
-  if (json !== null && typeof json === "object" && "data" in json) {
-    return (json as { data: T }).data;
-  }
-  return json as T;
-}
-
-/** Panggilan API dengan cookie sesi (credentials: include). */
-async function panggilApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const json = await fetchJson<unknown>(path, {
-    credentials: "include",
-    ...init,
-  });
-  return bukaData<T>(json);
-}
-
 function jeda(ms: number, sinyal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (sinyal?.aborted) {
@@ -284,11 +268,9 @@ export default function WifiPage() {
       .catch(() => {
         if (aktif) setMasuk(false);
       });
-    fetchJson<unknown>("/api/health")
-      .then((json) => {
-        if (!aktif) return;
-        const data = bukaData<{ status?: string; ok?: boolean }>(json);
-        setServerTerhubung(data?.status === "ok" || data?.ok === true);
+    checkApiHealth()
+      .then((terhubung) => {
+        if (aktif) setServerTerhubung(terhubung);
       })
       .catch(() => {
         if (aktif) setServerTerhubung(false);
@@ -320,7 +302,7 @@ export default function WifiPage() {
     setRiwayatGalat(null);
     try {
       const daftar = await panggilApi<LaporanWifi[]>(
-        "/api/wifi-reports?limit=20&offset=0",
+        "/api/wifi-reports?limit=20",
       );
       setRiwayat(Array.isArray(daftar) ? daftar : []);
     } catch {
@@ -597,7 +579,7 @@ export default function WifiPage() {
   };
 
   return (
-    <main className="min-h-screen bg-black px-4 py-6 text-zinc-100 sm:px-6">
+    <div className="min-h-screen bg-black px-4 py-6 text-zinc-100 sm:px-6">
       <div className="mx-auto max-w-2xl">
         <Link
           to="/"
@@ -916,7 +898,12 @@ export default function WifiPage() {
             <div className="mt-4">
               <h3 className="text-base font-medium">Kecepatan per detik</h3>
               <div className="mt-2">
-                <GrafikBertahan sampel={bertahan.sampel} />
+                <SustainedChart
+                  sampel={bertahan.sampel.map((s) => ({
+                    detikKe: s.detikKe,
+                    kecepatanKbps: s.kbps,
+                  }))}
+                />
               </div>
             </div>
           )}
@@ -1210,6 +1197,6 @@ export default function WifiPage() {
           perbaikannya.
         </p>
       </div>
-    </main>
+    </div>
   );
 }

@@ -65,7 +65,7 @@ yang sama. Frontend boleh mengandalkan bentuk ini di semua endpoint.
 | `success` | boolean | Selalu `true` pada respons sukses. |
 | `data` | object / array / null | Isi respons. Bentuknya tergantung endpoint (lihat tiap endpoint). |
 | `meta.timestamp` | string (ISO 8601) | Waktu server saat respons dibuat. |
-| `meta` | object | Opsional: endpoint daftar menambahkan `meta.pagination` (lihat 0.6). |
+| `meta.pagination` | object | Hanya endpoint daftar: `{ limit, next_cursor, has_more }` (paginasi cursor, lihat 0.6). |
 
 **Gagal:**
 
@@ -114,7 +114,7 @@ tabel `sessions`. Token mentah hanya ada di cookie pengguna.
 | Nilai | Token sesi mentah (hex/base64url, 32 byte) |
 | HttpOnly | Ya (tidak bisa dibaca JavaScript) |
 | Secure | Ya (hanya lewat HTTPS) |
-| SameSite | `Lax` |
+| SameSite | `None` (K-50: frontend Pages dan API Worker beda origin, jadi cookie lintas situs wajib `SameSite=None; Secure`) |
 | Path | `/` |
 | Max-Age | 30 hari (2.592.000 detik) |
 
@@ -130,12 +130,12 @@ header `Authorization` (tidak ada skema Bearer di API ini).
 | Tidak ada cookie / cookie kosong | Pengguna belum masuk. |
 | Token tidak ditemukan di D1 | Sesi sudah dihapus (keluar) atau tidak valid. |
 | `kedaluwarsa_pada` sudah lewat | Sesi kedaluwarsa (30 hari). |
-| `terkunci = 1` | Sesi belum dibuka dengan PIN (hanya bila PIN diatur). Endpoint selain PIN dan `/auth/me` menolak sesi terkunci dengan `SESSION_LOCKED` (403). |
+| Sesi terkunci PIN | Pengguna sudah mengatur PIN tetapi sesi ini belum dibuka dengan PIN: tidak ada baris `pin_unlocks` untuk sesi ini (tidak ada kolom `terkunci` di tabel `sessions` — status kunci berasal dari tabel `pin_unlocks`). Endpoint selain PIN dan `GET /api/auth/me` menolak sesi terkunci dengan `SESSION_LOCKED` (403). |
 
 **Penegakan kepemilikan.** Setiap query data memfilter `user_id`
 dari sesi yang terverifikasi. Tidak ada endpoint yang menerima
 `user_id` dari client. Bila pengguna meminta data milik pengguna
-lain (misalnya `/health-checks/:id` milik orang lain), server
+lain (misalnya `/api/health-checks/:id` milik orang lain), server
 menjawab **404 `NOT_FOUND`** — sama seperti bila data tidak ada —
 agar keberadaan data orang lain tidak bisa ditebak.
 
@@ -144,11 +144,15 @@ agar keberadaan data orang lain tidak bisa ditebak.
 | Header | Wajib | Keterangan |
 |---|---|---|
 | `Content-Type: application/json` | Ya (POST/PATCH/DELETE berbody) | Body bukan JSON ditolak dengan `VALIDATION_ERROR` (400). |
-| `Origin` | Ya (browser mengirim otomatis) | Worker hanya mengizinkan origin Pages dan Vercel. Origin lain ditolak dengan `FORBIDDEN` (403). |
+| `Origin` | Ya (browser mengirim otomatis) | Pada endpoint mutasi (POST/PATCH/PUT/DELETE), bila header `Origin` ada dan `ALLOWED_ORIGIN` diatur dan nilainya berbeda, Worker menolak dengan `FORBIDDEN` (403). Permintaan tanpa header `Origin` (curl, aplikasi non-browser) tetap diteruskan. |
 
-**CORS.** Hanya dua origin frontend (Pages utama dan mirror Vercel)
-yang diizinkan, dengan `credentials: true`. Tidak ada wildcard `*`.
-Preflight `OPTIONS` dijawab Worker dengan header CORS yang sesuai.
+**CORS (K-49).** Origin yang diizinkan berasal dari variabel
+lingkungan `ALLOWED_ORIGIN` (satu origin frontend), dengan
+`credentials: true`. Tidak ada wildcard `*` di produksi. Bila
+`ALLOWED_ORIGIN` tidak diatur (pengembangan lokal), Worker
+meng-echo origin pemanggil — tetap bukan `*` mentah, karena `*`
+tidak kompatibel dengan `credentials` di browser. Preflight
+`OPTIONS` dijawab Worker dengan header CORS yang sesuai.
 
 ### 0.5 Kode galat
 
@@ -160,20 +164,25 @@ bercabang dari `error.code`; `error.message` hanya untuk ditampilkan.
 | 400 | `VALIDATION_ERROR` | Body/query tidak valid (tipe salah, di luar batas, field wajib hilang, JSON rusak). | "Data yang dikirim tidak lengkap atau tidak valid." |
 | 400 | `INVALID_JSON` | Body bukan JSON yang bisa dibaca. | "Format data yang dikirim tidak dikenali." |
 | 401 | `UNAUTHORIZED` | Sesi tidak ada, tidak valid, atau kedaluwarsa. | "Sesi Anda sudah berakhir, silakan masuk lagi." |
-| 401 | `PIN_SALAH` | PIN yang dimasukkan salah (khusus `/auth/pin/verify`). | "PIN salah, coba lagi." |
+| 401 | `PIN_SALAH` | PIN yang dimasukkan salah (khusus `/api/auth/pin/verify`). | "PIN salah, coba lagi." |
 | 403 | `FORBIDDEN` | Origin tidak diizinkan atau aksi dilarang. | "Aksi ini tidak diizinkan." |
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN; buka dulu dengan PIN. | "Aplikasi terkunci, masukkan PIN untuk membuka." |
 | 403 | `PIN_TERKUNCI` | PIN terkunci sementara setelah 5 kali salah berturut-turut. | "Terlalu banyak percobaan salah. Coba lagi dalam 30 detik." |
-| 404 | `NOT_FOUND` | Data tidak ditemukan atau bukan milik pengguna. | "Data tidak ditemukan." |
-| 405 | `METHOD_NOT_ALLOWED` | Method HTTP tidak didukung pada path ini. | "Metode ini tidak didukung." |
-| 409 | `CONFLICT` | Konflik keadaan (misalnya sampel detik yang sama sudah ada). | "Data ini sudah ada." |
-| 409 | `PIN_SUDAH_DIATUR` | PIN sudah diatur; pakai ubah PIN (set ulang) bila ingin mengganti. | "PIN sudah diatur. Hapus dulu bila ingin mengatur ulang." |
-| 422 | `KONFIRMASI_SALAH` | Teks konfirmasi hapus akun tidak cocok. | "Teks konfirmasi tidak cocok. Ketik HAPUS untuk melanjutkan." |
+| 404 | `NOT_FOUND` | Data tidak ditemukan atau bukan milik pengguna. Rute yang tidak dikenal juga 404 `NOT_FOUND` (tidak ada respons 405 terpisah). | "Data tidak ditemukan." |
+| 409 | `CONFLICT` | Konflik keadaan: PIN belum diatur (pada `/api/auth/pin/verify` dan `/api/auth/pin/delete`), atau sampel detik yang sama sudah ada. | "PIN belum diatur." / "Data ini sudah ada." |
+| 422 | `KONFIRMASI_SALAH` | Teks konfirmasi hapus akun tidak cocok. | "Teks konfirmasi tidak cocok. Ketik HAPUS atau DELETE untuk melanjutkan." |
 | 429 | `RATE_LIMITED` | Melebihi batas rate limit. | "Terlalu sering, coba lagi sebentar." |
 | 429 | `AI_QUOTA_HABIS` | Kuota harian Diagnosis AI (20/hari) habis. | "Kuota Diagnosis AI hari ini sudah habis, coba lagi besok." |
 | 500 | `INTERNAL_ERROR` | Galat server tak terduga. | "Terjadi kesalahan di server, coba lagi nanti." |
-| 502 | `AI_TIDAK_TERSEDIA` | Layanan AI (Gemini) gagal/timeout. Jawaban tidak dikarang. | "Diagnosis AI sedang tidak tersedia, coba lagi nanti." |
 | 503 | `DATABASE_SIBUK` | D1 error/kuota habis. | "Server sedang sibuk, coba lagi nanti." |
+
+Kode yang sudah pensiun dan TIDAK BOLEH dipakai lagi: `AI_TIDAK_TERSEDIA`
+(502 — K-23: Diagnosis AI selalu menjawab 200, gagal Gemini menjadi
+jawaban fallback berlabel), `PIN_BELUM_DIATUR` dan `SESI_TIDAK_VALID`
+(K-47: diganti `CONFLICT` 409 dan `UNAUTHORIZED` 401),
+`RATE_LIMIT_EXCEEDED` (K-59: kanonisnya `RATE_LIMITED`),
+`PIN_SUDAH_DIATUR` (PIN bisa diatur ulang lewat endpoint yang sama,
+tidak ada konflik).
 
 **Contoh `VALIDATION_ERROR` dengan rincian per field:**
 
@@ -217,14 +226,21 @@ hitungan mundur, bukan menebak.
 
 ### 0.6 Paginasi daftar
 
-Semua endpoint daftar (`GET /health-checks`, `GET /wifi-reports`,
-`GET /ai/diagnoses`, `GET /account/sessions`) memakai paginasi
-offset yang sama:
+Semua endpoint daftar (`GET /api/health-checks`,
+`GET /api/wifi-reports`, `GET /api/ai/diagnoses`,
+`GET /api/account/sessions`, `GET /api/history`,
+`GET /api/wifi-reports/:id/samples`) memakai paginasi cursor
+keyset yang sama (K-32):
 
-| Query | Tipe | Default | Batas | Keterangan |
-|---|---|---|---|---|
-| `limit` | integer | 20 | 1–100 | Jumlah baris per halaman. Di luar batas → diklem ke batas terdekat (bukan galat), kecuali bukan angka → `VALIDATION_ERROR`. |
-| `offset` | integer | 0 | ≥ 0 | Baris yang dilewati. Negatif → `VALIDATION_ERROR`. |
+| Query | Tipe | Default | Keterangan |
+|---|---|---|---|
+| `limit` | integer | 20 | Jumlah baris per halaman. Nilai < 1 diklem ke 1, > 100 diklem ke 100; bukan angka (atau kosong) → `VALIDATION_ERROR` (400). |
+| `cursor` | string (base64url) | — (halaman pertama) | Cursor buram dari `meta.pagination.next_cursor` halaman sebelumnya. Tidak ada atau kosong → halaman pertama. Cursor yang tidak bisa didekode → `VALIDATION_ERROR` (400). |
+
+Cursor berisi kunci keyset (`dibuat_pada` + `id` baris terakhir
+halaman sebelumnya) dalam JSON yang di-encode base64url. Client
+TIDAK BOLEH mengurai atau merakit cursor sendiri — perlakukan
+sebagai string buram yang hanya diteruskan apa adanya.
 
 Respons daftar memakai bentuk ini:
 
@@ -236,8 +252,7 @@ Respons daftar memakai bentuk ini:
     "timestamp": "2026-11-17T15:30:00.000Z",
     "pagination": {
       "limit": 20,
-      "offset": 0,
-      "total": 57,
+      "next_cursor": "eyJkaWJ1YXRfcGFkYSI6IjIwMjYtMTEtMTdUMTU6MzA6MDAuMDAwWiIsImlkIjoiLi4uIn0",
       "has_more": true
     }
   }
@@ -246,22 +261,37 @@ Respons daftar memakai bentuk ini:
 
 | Field | Keterangan |
 |---|---|
-| `meta.pagination.total` | Jumlah total baris milik pengguna yang cocok (tanpa limit/offset). |
-| `meta.pagination.has_more` | `true` bila masih ada baris setelah halaman ini (`offset + data.length < total`). |
+| `meta.pagination.limit` | Limit yang dipakai halaman ini (setelah klem). |
+| `meta.pagination.next_cursor` | Cursor halaman berikutnya, atau `null` bila halaman ini yang terakhir. |
+| `meta.pagination.has_more` | `true` bila masih ada baris setelah halaman ini; `false` bersama `next_cursor: null` saat habis. |
 
-Urutan daftar: terbaru dulu (`dibuat_pada` menurun), kecuali
-dinyatakan lain. Baris soft-delete (`deleted_at` terisi) tidak
-pernah muncul di daftar.
+Paginasi offset (`limit` + `offset` + `total`) DIPENSIUNKAN dan
+dihapus — parameter `offset` tidak lagi dibaca, dan respons tidak
+lagi membawa `total`. Alasannya: cursor keyset stabil bila ada
+baris baru yang masuk di tengah penelusuran (tidak ada baris yang
+terlewat atau tampil ganda), dan tidak butuh query `COUNT` yang
+mahal.
+
+Urutan daftar: terbaru dulu (`dibuat_pada` menurun, `id` menurun
+sebagai penentu seri), kecuali dinyatakan lain. Baris soft-delete
+(`deleted_at` terisi) tidak pernah muncul di daftar.
 
 ### 0.7 Rate limit umum
+
+Rate limit ditegakkan lewat tabel D1 `rate_limits` (K-02 — bukan
+KV): satu baris per kunci `${cakupan}:${subjek}:${jendela}` dengan
+penghitung `jumlah`. Bila D1 gagal saat pemeriksaan, permintaan
+ditolak 503 `DATABASE_SIBUK` (fail-closed), kecuali alur OAuth
+di bawah yang fail-open agar masuk tidak macet total.
 
 | Cakupan | Batas | Keterangan |
 |---|---|---|
 | Semua endpoint tulis (POST/PATCH/DELETE) | 60/menit per pengguna | Dihitung per `user_id` dari sesi. |
-| `GET /auth/google` | 10/menit per IP | Cegah penyalahgunaan OAuth. |
-| `POST /auth/pin/verify` | 5 percobaan salah, lalu kunci 30 detik | Bukan rate limit menit — kunci PIN (lihat 1.4). |
-| `POST /ai/diagnose` | 20/hari per pengguna | Lindungi kuota Gemini bersama. |
-| `GET /ping`, `GET /health` | Tanpa batas ketat | Tanpa akses D1; murah. |
+| `GET /api/auth/google` | 10/menit per IP | Cegah penyalahgunaan OAuth. Fail-open: bila D1 gagal, permintaan tetap diteruskan (dan dicatat di log server). |
+| `POST /api/auth/pin/verify` | 5 percobaan salah, lalu kunci 30 detik | Bukan rate limit menit — kunci PIN (lihat 2.2). |
+| `POST /api/ai/diagnose` | 20/hari per pengguna | Lindungi kuota Gemini bersama. |
+| `GET /api/account/export` | 5/hari per pengguna | Dihitung SEBELUM query berat dijalankan; panggilan ke-6 ditolak 429 `RATE_LIMITED` (K-42, K-59). |
+| `GET /api/ping`, `GET /api/health` | Tanpa batas ketat | Tanpa akses D1; murah. |
 | Endpoint baca lain | 300/menit per pengguna | Batas longgar untuk mencegah banjir baca. |
 
 Batas per endpoint ditulis juga di tiap endpoint di bawah. Respons
@@ -271,55 +301,59 @@ waktu tunggu diketahui.
 
 ### 0.8 Daftar endpoint (ringkasan)
 
-Total **27 endpoint** (25 dari `ARCHITECTURE.md` §3 ditambah 2
-endpoint dari penugasan tim ini: ekspor data dan info speedtest —
-lihat Changelog).
+Total **29 endpoint** bernomor (K-43). Di luar nomor ini ada satu
+operasi pendamping yang didokumentasikan di §7 (Riwayat gabungan)
+tanpa nomor tersendiri: `DELETE /api/history/:jenis/:id` (hapus
+satu entri riwayat, semua jenis).
+
+Semua path memakai awalan `/api` (K-07).
 
 | # | Method | Path | Auth | Grup |
 |---|---|---|---|---|
-| 1 | GET | `/auth/google` | Publik | Auth Google |
-| 2 | GET | `/auth/google/callback` | Publik | Auth Google |
-| 3 | POST | `/auth/logout` | Sesi | Auth Google |
-| 4 | GET | `/auth/me` | Sesi | Auth Google |
-| 5 | POST | `/auth/pin/set` | Sesi | PIN |
-| 6 | POST | `/auth/pin/verify` | Sesi | PIN |
-| 7 | POST | `/auth/pin/delete` | Sesi | PIN |
-| 8 | POST | `/health-checks` | Sesi | Health checks |
-| 9 | GET | `/health-checks` | Sesi | Health checks |
-| 10 | GET | `/health-checks/:id` | Sesi | Health checks |
-| 11 | DELETE | `/health-checks/:id` | Sesi | Health checks |
-| 12 | POST | `/wifi-reports` | Sesi | WiFi |
-| 13 | GET | `/wifi-reports` | Sesi | WiFi |
-| 14 | GET | `/wifi-reports/:id` | Sesi | WiFi |
-| 15 | DELETE | `/wifi-reports/:id` | Sesi | WiFi |
-| 16 | POST | `/wifi-reports/:id/samples` | Sesi | WiFi (tes bertahan) |
-| 17 | POST | `/ai/diagnose` | Sesi | AI |
-| 18 | GET | `/ai/diagnoses` | Sesi | AI |
-| 19 | GET | `/account/profile` | Sesi | Akun |
-| 20 | PATCH | `/account/profile` | Sesi | Akun |
-| 21 | GET | `/account/sessions` | Sesi | Akun |
-| 22 | DELETE | `/account/sessions/:id` | Sesi | Akun |
-| 23 | DELETE | `/account` | Sesi | Akun |
-| 24 | GET | `/account/export` | Sesi | Akun |
-| 25 | GET | `/health` | Publik | Utilitas |
-| 26 | GET | `/ping` | Publik | Utilitas |
-| 27 | GET | `/speedtest/info` | Publik | Utilitas |
+| 1 | GET | `/api/auth/google` | Publik | Auth Google |
+| 2 | GET | `/api/auth/google/callback` | Publik | Auth Google |
+| 3 | POST | `/api/auth/logout` | Sesi | Auth Google |
+| 4 | GET | `/api/auth/me` | Sesi | Auth Google |
+| 5 | POST | `/api/auth/pin/set` | Sesi | PIN |
+| 6 | POST | `/api/auth/pin/verify` | Sesi | PIN |
+| 7 | POST | `/api/auth/pin/delete` | Sesi | PIN |
+| 8 | POST | `/api/health-checks` | Sesi | Health checks |
+| 9 | GET | `/api/health-checks` | Sesi | Health checks |
+| 10 | GET | `/api/health-checks/:id` | Sesi | Health checks |
+| 11 | DELETE | `/api/health-checks/:id` | Sesi | Health checks |
+| 12 | POST | `/api/wifi-reports` | Sesi | WiFi |
+| 13 | GET | `/api/wifi-reports` | Sesi | WiFi |
+| 14 | GET | `/api/wifi-reports/:id` | Sesi | WiFi |
+| 15 | DELETE | `/api/wifi-reports/:id` | Sesi | WiFi |
+| 16 | POST | `/api/wifi-reports/:id/samples` | Sesi | WiFi (tes bertahan) |
+| 17 | POST | `/api/ai/diagnose` | Sesi | AI |
+| 18 | GET | `/api/ai/diagnoses` | Sesi | AI |
+| 19 | GET | `/api/account/profile` | Sesi | Akun |
+| 20 | PATCH | `/api/account/profile` | Sesi | Akun |
+| 21 | GET | `/api/account/sessions` | Sesi | Akun |
+| 22 | DELETE | `/api/account/sessions/:id` | Sesi | Akun |
+| 23 | DELETE | `/api/account` | Sesi | Akun |
+| 24 | GET | `/api/account/export` | Sesi | Akun |
+| 25 | GET | `/api/health` | Publik | Utilitas |
+| 26 | GET | `/api/ping` | Publik | Utilitas |
+| 27 | GET | `/api/speedtest/info` | Publik | Utilitas |
+| 28 | GET | `/api/history` | Sesi | Riwayat gabungan |
+| 29 | GET | `/api/wifi-reports/:id/samples` | Sesi | WiFi (tes bertahan) |
 
-Catatan tentang angka 24 di `ARCHITECTURE.md`: dokumen arsitektur
-menyebut 24 endpoint, tetapi tabel §3-nya bila dihitung berisi 25
-(7 auth + 4 health checks + 5 WiFi + 2 AI + 5 akun + 2 utilitas).
-Dokumen ini mendokumentasikan seluruh 25 itu, ditambah 2 endpoint
-baru (ekspor data dan info speedtest) sehingga total 27.
+Alias (bukan endpoint bernomor tersendiri): `POST /api/ai/tanya`
+dan `GET /api/ai/riwayat` adalah alias dari #17 dan #18 dengan
+perilaku yang sama persis. Path tanpa awalan `/api` (`/ai/*`,
+`/auth/*`, dsb.) TIDAK ADA — permintaan ke sana dijawab 404.
 
 ---
 ## 1. Auth Google
 
 Alur OAuth memakai authorization code flow + PKCE. Penukaran kode
 terjadi di server; `client_secret` Google tidak pernah keluar dari
-Worker. Frontend hanya mengarahkan browser ke `/auth/google` dan
+Worker. Frontend hanya mengarahkan browser ke `/api/auth/google` dan
 menerima redirect kembali ke aplikasi setelah callback selesai.
 
-### 1.1 Mulai masuk Google — `GET /auth/google`
+### 1.1 Mulai masuk Google — `GET /api/auth/google`
 
 Memulai alur OAuth. Worker membuat `state` dan `code_verifier`
 (PKCE), menyimpannya sementara di cookie HttpOnly berumur singkat
@@ -327,20 +361,21 @@ Memulai alur OAuth. Worker membuat `state` dan `code_verifier`
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /auth/google` |
+| Method + path | `GET /api/auth/google` |
 | Auth | Publik (tanpa sesi) |
 | Header request | Tidak ada header khusus. |
-| Query | Opsional: `redirect` — path dalam aplikasi tujuan setelah masuk berhasil (misalnya `/dashboard`, `/wifi`). Hanya path relatif yang diawali `/` dan tanpa `//` di awal; nilai lain diabaikan dan diganti `/dashboard`. |
+| Query | Opsional: `redirect` — path dalam aplikasi tujuan setelah masuk berhasil (misalnya `/dashboard`, `/wifi`). Hanya path relatif yang diawali `/` dan tanpa `//` di awal, maksimal 500 karakter; nilai lain diabaikan dan diganti `/dashboard`. |
 | Request body | Tidak ada. |
-| Rate limit | 10/menit per IP. |
+| Rate limit | 10/menit per IP (tabel D1 `rate_limits`; fail-open bila D1 gagal — lihat 0.7). |
 
 **Respons sukses — 302 Found (redirect, bukan JSON):**
 
 ```
 HTTP/1.1 302 Found
 Location: https://accounts.google.com/o/oauth2/v2/auth?client_id=...&redirect_uri=...&response_type=code&scope=openid%20email%20profile&state=...&code_challenge=...&code_challenge_method=S256
-Set-Cookie: dokter_hp_oauth_state=<nilai>; HttpOnly; Secure; SameSite=Lax; Path=/auth; Max-Age=600
-Set-Cookie: dokter_hp_oauth_verifier=<nilai>; HttpOnly; Secure; SameSite=Lax; Path=/auth; Max-Age=600
+Set-Cookie: dokter_hp_oauth_state=<nilai>; HttpOnly; Secure; SameSite=Lax; Path=/api/auth; Max-Age=600
+Set-Cookie: dokter_hp_oauth_verifier=<nilai>; HttpOnly; Secure; SameSite=Lax; Path=/api/auth; Max-Age=600
+Set-Cookie: dokter_hp_oauth_redirect=<path>; HttpOnly; Secure; SameSite=Lax; Path=/api/auth; Max-Age=600
 ```
 
 | Field | Keterangan |
@@ -349,7 +384,13 @@ Set-Cookie: dokter_hp_oauth_verifier=<nilai>; HttpOnly; Secure; SameSite=Lax; Pa
 | `state` | Nilai acak anti-CSRF; dicocokkan di callback. |
 | `code_challenge` | PKCE S256 dari `code_verifier`. |
 
-**Respons galat:**
+Cookie `dokter_hp_oauth_redirect` hanya disetel bila parameter
+`redirect` valid dan bukan `/dashboard`; bila tidak ada, callback
+memakai `/dashboard`. Ketiga cookie OAuth memakai `SameSite=Lax`
+(sengaja BUKAN `None`): alur ini hanya redirect di domain API
+sendiri, bukan fetch lintas situs.
+
+**Respons galat (JSON envelope, bukan redirect):**
 
 | HTTP | Kode | Kondisi |
 |---|---|---|
@@ -360,23 +401,24 @@ Set-Cookie: dokter_hp_oauth_verifier=<nilai>; HttpOnly; Secure; SameSite=Lax; Pa
 
 - Endpoint ini dipakai lewat navigasi browser penuh (bukan `fetch`),
   karena responsnya redirect ke Google.
-- Cookie OAuth sementara dihapus di callback (sukses maupun gagal).
+- Ketiga cookie OAuth sementara dihapus di callback — di SEMUA
+  jalur keluar, sukses maupun galat (lihat 1.2).
 
-### 1.2 Callback Google — `GET /auth/google/callback`
+### 1.2 Callback Google — `GET /api/auth/google/callback`
 
 Google mengarahkan browser kembali ke endpoint ini setelah pengguna
 menyetujui. Worker memvalidasi `state`, menukar `code` dengan token
 di server, mengambil profil Google (`sub`, `email`, `name`), mencari
-atau membuat pengguna (berdasar `google_sub`), membuat sesi, dan
-redirect ke aplikasi.
+atau membuat pengguna (berdasar `email` + provider `google` — BUKAN
+`google_sub`), membuat sesi, dan redirect ke aplikasi.
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /auth/google/callback` |
+| Method + path | `GET /api/auth/google/callback` |
 | Auth | Publik (tanpa sesi) |
 | Header request | Cookie OAuth sementara dari 1.1 (dikirim browser otomatis). |
 | Request body | Tidak ada. |
-| Rate limit | 10/menit per IP (sama seperti 1.1; dihitung gabungan per IP). |
+| Rate limit | Tidak ada batas terpisah di callback (batas 10/menit per IP berlaku di 1.1). |
 
 **Query string:**
 
@@ -391,26 +433,35 @@ redirect ke aplikasi.
 ```
 HTTP/1.1 302 Found
 Location: /dashboard
-Set-Cookie: dokter_hp_session=<token>; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000
-Set-Cookie: dokter_hp_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/auth; Max-Age=0
-Set-Cookie: dokter_hp_oauth_verifier=; HttpOnly; Secure; SameSite=Lax; Path=/auth; Max-Age=0
+Set-Cookie: dokter_hp_session=<token>; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=2592000
+Set-Cookie: dokter_hp_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/api/auth; Max-Age=0
+Set-Cookie: dokter_hp_oauth_verifier=; HttpOnly; Secure; SameSite=Lax; Path=/api/auth; Max-Age=0
+Set-Cookie: dokter_hp_oauth_redirect=; HttpOnly; Secure; SameSite=Lax; Path=/api/auth; Max-Age=0
 ```
 
-Tujuan redirect: nilai `redirect` dari 1.1 bila valid, bila tidak
-`/dashboard`. Bila pengguna sudah mengatur PIN, sesi baru dibuat
-dengan `terkunci = 1` dan frontend mengarahkan ke `/kunci` setelah
-memeriksa `/auth/me` (lihat 1.4 dan 2.2).
+Tujuan redirect: nilai cookie `dokter_hp_oauth_redirect` bila valid,
+bila tidak `/dashboard`. Bila pengguna sudah mengatur PIN, sesi baru
+dianggap terkunci sampai dibuka dengan PIN (tidak ada baris
+`pin_unlocks` untuk sesi baru) dan frontend mengarahkan ke `/kunci`
+setelah memeriksa `/api/auth/me` (lihat 1.4 dan 2.2).
+
+**Penghapusan cookie OAuth.** Ketiga cookie OAuth sementara (state,
+verifier, redirect) dihapus di SEMUA jalur keluar callback — sukses
+maupun setiap jalur galat di bawah (state tidak cocok, kode tidak
+valid, penukaran gagal, profil gagal, galat database). Tidak ada
+jalur keluar yang membiarkan cookie OAuth tertinggal.
 
 **Efek samping di server:**
 
 - Pengguna baru: baris `users` + `profiles` dibuat (`id` UUID baru,
   `nama` dari profil Google, `email` dari Google).
-- Pengguna lama: `users.nama` diperbarui dari profil Google bila
-  berubah (nama tampilan dari Google adalah sumber awal; perubahan
-  manual lewat `PATCH /account/profile` tidak ditimpa — lihat
-  catatan di 6.2).
+- Pengguna lama: dikembalikan apa adanya — `users.nama` TIDAK
+  diperbarui dari profil Google (nama Google hanya dipakai untuk
+  pengguna baru; perubahan manual lewat `PATCH /api/account/profile`
+  tidak ditimpa — lihat 6.2). PIN yang sudah diatur tidak dihapus.
 - Baris `sessions` baru dibuat (`kedaluwarsa_pada` = sekarang +
-  30 hari, `terkunci` = 1 bila PIN diatur, 0 bila tidak).
+  30 hari; `user_agent` dan `ip_terakhir` direkam dari header
+  request untuk daftar sesi di Pengaturan).
 
 **Respons galat — redirect ke aplikasi dengan pesan galat**
 (tetap 302, bukan JSON, karena dipanggil lewat navigasi browser):
@@ -433,13 +484,13 @@ Frontend di `/masuk` membaca query `error` dan menampilkan pesan
 yang sesuai dalam bahasa sehari-hari. Nilai `error` yang tidak
 dikenal diperlakukan sebagai `oauth_gagal`.
 
-### 1.3 Keluar — `POST /auth/logout`
+### 1.3 Keluar — `POST /api/auth/logout`
 
 Menghapus sesi saat ini di D1 dan menghapus cookie sesi di browser.
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `POST /auth/logout` |
+| Method + path | `POST /api/auth/logout` |
 | Auth | Sesi wajib (cookie `dokter_hp_session`). Sesi terkunci PIN tetap boleh keluar. |
 | Header request | `Cookie: dokter_hp_session=TOKEN` (dikirim browser otomatis). |
 | Request body | Tidak ada. |
@@ -458,7 +509,7 @@ Menghapus sesi saat ini di D1 dan menghapus cookie sesi di browser.
 Header respons menyertakan penghapusan cookie:
 
 ```
-Set-Cookie: dokter_hp_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0
+Set-Cookie: dokter_hp_session=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0
 ```
 
 **Respons galat:**
@@ -469,9 +520,9 @@ Set-Cookie: dokter_hp_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=
 
 **Catatan:** hanya sesi saat ini yang dihapus. Sesi di perangkat
 lain tetap aktif sampai kedaluwarsa atau dihapus lewat
-`DELETE /account/sessions/:id` (lihat 6.3).
+`DELETE /api/account/sessions/:id` (lihat 6.4).
 
-### 1.4 Info pengguna saat ini — `GET /auth/me`
+### 1.4 Info pengguna saat ini — `GET /api/auth/me`
 
 Mengembalikan identitas pengguna dari sesi saat ini. Dipakai
 frontend setelah muat ulang halaman untuk memulihkan keadaan login,
@@ -479,7 +530,7 @@ dan untuk memutuskan apakah layar kunci PIN perlu tampil.
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /auth/me` |
+| Method + path | `GET /api/auth/me` |
 | Auth | Sesi wajib. **Boleh dipanggil saat sesi terkunci PIN** (frontend butuh jawaban ini untuk menampilkan layar kunci). |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
@@ -508,7 +559,7 @@ dan untuk memutuskan apakah layar kunci PIN perlu tampil.
 | `nama` | string | Nama tampilan. |
 | `email` | string | Email dari Google. |
 | `pin_diatur` | boolean | `true` bila `users.pin_hash` terisi. |
-| `sesi_terkunci` | boolean | `true` bila sesi saat ini `terkunci = 1` (PIN belum dibuka). |
+| `sesi_terkunci` | boolean | `true` bila pengguna sudah mengatur PIN tetapi sesi saat ini belum dibuka dengan PIN (tidak ada baris `pin_unlocks` untuk sesi ini). |
 | `sesi_kedaluwarsa_pada` | string (ISO 8601) | Kapan sesi ini kedaluwarsa. |
 
 **Respons galat:**
@@ -525,26 +576,27 @@ PIN 4–8 digit sebagai kunci aplikasi web. PIN disimpan sebagai
 hash SHA-256 (PIN + salt acak per pengguna); PIN asli tidak pernah
 disimpan dan tidak pernah dicatat di log.
 
-Aturan kunci:
+Aturan kunci (dicatat di tabel D1 `pin_attempts`, BUKAN di kolom
+tabel `users`):
 
 - Setelah 5 kali PIN salah berturut-turut, percobaan dikunci
-  30 detik (`users.pin_terkunci_sampai`). Selama terkunci, setiap
+  30 detik (`pin_attempts.terkunci_sampai`). Selama terkunci, setiap
   percobaan ditolak dengan `PIN_TERKUNCI` tanpa memeriksa PIN.
-- PIN benar mereset penghitung `pin_gagal_berturut` ke 0.
+- PIN benar mereset penghitung (baris `pin_attempts` dihapus).
 - Pemulihan bila PIN lupa: masuk ulang dengan Google (sesi baru
   tetap terkunci), lalu atur PIN baru dari Pengaturan lewat
-  `POST /auth/pin/set` — endpoint ini memakai sesi Google yang
+  `POST /api/auth/pin/set` — endpoint ini memakai sesi Google yang
   sah sebagai otorisasi, sehingga PIN lama tidak diperlukan.
   Riwayat yang sudah tersimpan tetap aman.
 
-### 2.1 Atur PIN — `POST /auth/pin/set`
+### 2.1 Atur PIN — `POST /api/auth/pin/set`
 
 Mengatur PIN baru (atau mengganti PIN lama — PIN lama tidak perlu
 diberikan karena sesi Google yang sah sudah menjadi otorisasi).
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `POST /auth/pin/set` |
+| Method + path | `POST /api/auth/pin/set` |
 | Auth | Sesi wajib. **Boleh dipanggil saat sesi terkunci PIN** (jalur pemulihan bila PIN lupa). |
 | Header request | `Content-Type: application/json`, `Cookie: dokter_hp_session=TOKEN`. |
 | Rate limit | Batas tulis umum: 60/menit per pengguna. |
@@ -573,9 +625,11 @@ diberikan karena sesi Google yang sah sudah menjadi otorisasi).
 }
 ```
 
-**Efek samping:** `pin_hash` dan `pin_salt` baru disimpan;
-`pin_gagal_berturut` direset ke 0; `pin_terkunci_sampai` dikosongkan.
-Sesi saat ini langsung ditandai tidak terkunci (`terkunci = 0`).
+**Efek samping:** `pin_hash` dan `pin_salt` baru disimpan; baris
+`pin_attempts` pengguna dihapus (penghitung gagal direset). Sesi
+saat ini langsung ditandai sudah dibuka (baris `pin_unlocks`
+dibuat) agar pengguna yang baru mengatur PIN tidak langsung
+dikunci di sesi ini.
 
 **Respons galat:**
 
@@ -584,14 +638,14 @@ Sesi saat ini langsung ditandai tidak terkunci (`terkunci = 0`).
 | 400 | `VALIDATION_ERROR` | `pin` hilang, bukan string, mengandung bukan-digit, atau panjang di luar 4–8. |
 | 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
 
-### 2.2 Verifikasi PIN — `POST /auth/pin/verify`
+### 2.2 Verifikasi PIN — `POST /api/auth/pin/verify`
 
 Memeriksa PIN dan membuka kunci sesi bila benar. Dipanggil dari
 layar kunci (`/kunci`).
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `POST /auth/pin/verify` |
+| Method + path | `POST /api/auth/pin/verify` |
 | Auth | Sesi wajib. **Boleh dipanggil saat sesi terkunci PIN** (ini memang tujuannya). |
 | Header request | `Content-Type: application/json`, `Cookie: dokter_hp_session=TOKEN`. |
 | Rate limit | 5 percobaan salah berturut-turut → kunci 30 detik (bukan rate limit per menit). Selama terkunci, respons `PIN_TERKUNCI` (403). |
@@ -623,8 +677,9 @@ layar kunci (`/kunci`).
 }
 ```
 
-**Efek samping bila benar:** sesi saat ini ditandai tidak terkunci
-(`terkunci = 0`); `pin_gagal_berturut` direset ke 0.
+**Efek samping bila benar:** sesi saat ini ditandai sudah dibuka
+(baris `pin_unlocks` dibuat); baris `pin_attempts` pengguna
+dihapus (penghitung gagal direset).
 
 **Respons galat:**
 
@@ -654,14 +709,15 @@ layar kunci (`/kunci`).
 mengembalikan `PIN_TERKUNCI` (403) beserta `sisa_detik: 30`, bukan
 `PIN_SALAH`.
 
-### 2.3 Hapus PIN — `POST /auth/pin/delete`
+### 2.3 Hapus PIN — `POST /api/auth/pin/delete`
 
 Menghapus PIN sehingga aplikasi tidak lagi menampilkan layar kunci.
 Tidak memerlukan PIN lama (sesi Google yang sah adalah otorisasi).
+Alias: `POST /api/auth/pin/hapus` (perilaku sama persis).
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `POST /auth/pin/delete` |
+| Method + path | `POST /api/auth/pin/delete` |
 | Auth | Sesi wajib. **Boleh dipanggil saat sesi terkunci PIN** (jalur pemulihan bila PIN lupa). |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
@@ -677,9 +733,9 @@ Tidak memerlukan PIN lama (sesi Google yang sah adalah otorisasi).
 }
 ```
 
-**Efek samping:** `pin_hash`, `pin_salt`, dan `pin_terkunci_sampai`
-dikosongkan; `pin_gagal_berturut` direset ke 0. Semua sesi pengguna
-ditandai tidak terkunci.
+**Efek samping:** `pin_hash` dan `pin_salt` dikosongkan; baris
+`pin_attempts` pengguna dihapus. Karena tidak ada PIN lagi, semua
+sesi pengguna otomatis dianggap tidak terkunci.
 
 **Respons galat:**
 
@@ -728,11 +784,11 @@ dan tidak menghitung ulang. Baris yang dibuat lewat web langsung
 | `deleted_at` | string (ISO 8601) / null | Terisi bila soft-delete; respons biasa selalu `null`. |
 | `sync_status` | string | `pending` / `synced` / `failed`. Baris web selalu `synced`. |
 
-### 3.1 Buat health check — `POST /health-checks`
+### 3.1 Buat health check — `POST /api/health-checks`
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `POST /health-checks` |
+| Method + path | `POST /api/health-checks` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Content-Type: application/json`, `Cookie: dokter_hp_session=TOKEN`. |
 | Rate limit | Batas tulis umum: 60/menit per pengguna. |
@@ -787,15 +843,15 @@ dan tidak menghitung ulang. Baris yang dibuat lewat web langsung
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 | 429 | `RATE_LIMITED` | Melebihi batas tulis. |
 
-### 3.2 Daftar health checks — `GET /health-checks`
+### 3.2 Daftar health checks — `GET /api/health-checks`
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /health-checks` |
+| Method + path | `GET /api/health-checks` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
-| Query | `limit` (default 20, 1–100), `offset` (default 0, ≥ 0). Lihat 0.6. |
+| Query | `limit` (default 20, 1–100), `cursor` (halaman berikutnya, lihat 0.6). |
 | Rate limit | Batas baca: 300/menit per pengguna. |
 
 Hanya baris milik pengguna dengan `deleted_at IS NULL`, terbaru
@@ -822,7 +878,7 @@ dulu. Dipakai dashboard (grafik riwayat skor) dan halaman Riwayat.
   ],
   "meta": {
     "timestamp": "2026-11-17T15:30:00.000Z",
-    "pagination": { "limit": 20, "offset": 0, "total": 1, "has_more": false }
+    "pagination": { "limit": 20, "next_cursor": null, "has_more": false }
   }
 }
 ```
@@ -831,15 +887,15 @@ dulu. Dipakai dashboard (grafik riwayat skor) dan halaman Riwayat.
 
 | HTTP | Kode | Kondisi |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | `limit`/`offset` bukan angka atau `offset` negatif. |
+| 400 | `VALIDATION_ERROR` | `limit` bukan angka atau `cursor` tidak valid. |
 | 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 
-### 3.3 Detail health check — `GET /health-checks/:id`
+### 3.3 Detail health check — `GET /api/health-checks/:id`
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /health-checks/:id` |
+| Method + path | `GET /api/health-checks/:id` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
@@ -860,7 +916,7 @@ dulu. Dipakai dashboard (grafik riwayat skor) dan halaman Riwayat.
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 | 404 | `NOT_FOUND` | Tidak ada, sudah dihapus, atau bukan milik pengguna. |
 
-### 3.4 Hapus health check — `DELETE /health-checks/:id`
+### 3.4 Hapus health check — `DELETE /api/health-checks/:id`
 
 Soft-delete: `deleted_at` diisi waktu saat ini; baris tidak dihapus
 permanen. Baris yang sudah soft-delete tidak muncul lagi di daftar
@@ -868,7 +924,7 @@ atau detail (detail menjawab 404).
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `DELETE /health-checks/:id` |
+| Method + path | `DELETE /api/health-checks/:id` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
@@ -958,7 +1014,7 @@ angka mentah dan tidak menghitung klasifikasi.
 | `dibuat_pada` / `updated_at` | string (ISO 8601) | Waktu dibuat / terakhir diubah (server). |
 | `deleted_at` | string (ISO 8601) / null | Terisi bila soft-delete; respons biasa selalu `null`. |
 
-### 4.1 Buat laporan WiFi — `POST /wifi-reports`
+### 4.1 Buat laporan WiFi — `POST /api/wifi-reports`
 
 Menyimpan satu hasil tes. Untuk tes bertahan 30 detik, frontend
 membuat laporan dulu dengan `durasi_tes_detik: 30`, lalu mengirim
@@ -966,7 +1022,7 @@ sampel per detik lewat 4.5.
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `POST /wifi-reports` |
+| Method + path | `POST /api/wifi-reports` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Content-Type: application/json`, `Cookie: dokter_hp_session=TOKEN`. |
 | Rate limit | Batas tulis umum: 60/menit per pengguna. |
@@ -1019,20 +1075,20 @@ di atas (dalam `data`).
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 | 429 | `RATE_LIMITED` | Melebihi batas tulis. |
 
-### 4.2 Daftar laporan WiFi — `GET /wifi-reports`
+### 4.2 Daftar laporan WiFi — `GET /api/wifi-reports`
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /wifi-reports` |
+| Method + path | `GET /api/wifi-reports` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
-| Query | `limit` (default 20, 1–100), `offset` (default 0, ≥ 0). Lihat 0.6. |
+| Query | `limit` (default 20, 1–100), `cursor` (halaman berikutnya, lihat 0.6). |
 | Rate limit | Batas baca: 300/menit per pengguna. |
 
 Hanya baris milik pengguna dengan `deleted_at IS NULL`, terbaru
-dulu. Daftar tidak menyertakan sampel tes bertahan (sampel hanya
-di detail, 4.3).
+dulu. Daftar tidak menyertakan sampel tes bertahan (sampel ada
+di detail, 4.3, atau lewat endpoint khusus, 4.6).
 
 **Respons sukses — 200 OK:** envelope daftar dengan `data` berisi
 array objek laporan WiFi dan `meta.pagination` seperti 0.6.
@@ -1041,18 +1097,18 @@ array objek laporan WiFi dan `meta.pagination` seperti 0.6.
 
 | HTTP | Kode | Kondisi |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | `limit`/`offset` bukan angka atau `offset` negatif. |
+| 400 | `VALIDATION_ERROR` | `limit` bukan angka atau `cursor` tidak valid. |
 | 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 
-### 4.3 Detail laporan WiFi — `GET /wifi-reports/:id`
+### 4.3 Detail laporan WiFi — `GET /api/wifi-reports/:id`
 
 Mengembalikan satu laporan beserta sampel tes bertahan bila ada
 (laporan dengan `durasi_tes_detik: 30`).
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /wifi-reports/:id` |
+| Method + path | `GET /api/wifi-reports/:id` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
@@ -1105,7 +1161,7 @@ Mengembalikan satu laporan beserta sampel tes bertahan bila ada
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 | 404 | `NOT_FOUND` | Tidak ada, sudah dihapus, atau bukan milik pengguna. |
 
-### 4.4 Hapus laporan WiFi — `DELETE /wifi-reports/:id`
+### 4.4 Hapus laporan WiFi — `DELETE /api/wifi-reports/:id`
 
 Soft-delete: `deleted_at` diisi waktu saat ini; baris dan sampelnya
 tidak dihapus permanen. Laporan yang sudah soft-delete tidak muncul
@@ -1113,7 +1169,7 @@ lagi di daftar atau detail (detail menjawab 404).
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `DELETE /wifi-reports/:id` |
+| Method + path | `DELETE /api/wifi-reports/:id` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
@@ -1142,7 +1198,7 @@ lagi di daftar atau detail (detail menjawab 404).
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 | 404 | `NOT_FOUND` | Tidak ada, sudah dihapus, atau bukan milik pengguna. |
 
-### 4.5 Kirim sampel tes bertahan — `POST /wifi-reports/:id/samples`
+### 4.5 Kirim sampel tes bertahan — `POST /api/wifi-reports/:id/samples`
 
 Menyimpan sampel per detik dari tes bertahan 30 detik ke laporan
 yang sudah dibuat lewat 4.1 (dengan `durasi_tes_detik: 30`).
@@ -1153,7 +1209,7 @@ mengirim ulang detik yang sama menimpa nilai lama).
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `POST /wifi-reports/:id/samples` |
+| Method + path | `POST /api/wifi-reports/:id/samples` |
 | Auth | Sesi wajib, tidak terkunci PIN. Laporan harus milik pengguna. |
 | Header request | `Content-Type: application/json`, `Cookie: dokter_hp_session=TOKEN`. |
 | Rate limit | Batas tulis umum: 60/menit per pengguna. |
@@ -1211,6 +1267,51 @@ Mengirim detik yang sudah ada menimpa nilai lama (upsert pada
 | 404 | `NOT_FOUND` | Laporan tidak ada, sudah dihapus, atau bukan milik pengguna. |
 | 422 | `VALIDATION_ERROR` | Laporan bukan tes bertahan (`durasi_tes_detik` bukan 30) — sampel hanya untuk laporan tes bertahan. |
 
+### 4.6 Daftar sampel tes bertahan — `GET /api/wifi-reports/:id/samples`
+
+Mengembalikan seluruh sampel tes bertahan milik satu laporan
+(endpoint #29, K-43). Tidak memakai paginasi: jumlah sampel per
+laporan dibatasi 30, jadi seluruh daftar dikembalikan sekaligus.
+
+| Aspek | Keterangan |
+|---|---|
+| Method + path | `GET /api/wifi-reports/:id/samples` |
+| Auth | Sesi wajib, tidak terkunci PIN. Laporan harus milik pengguna. |
+| Header request | `Cookie: dokter_hp_session=TOKEN`. |
+| Request body | Tidak ada. |
+| Rate limit | Batas baca: 300/menit per pengguna. |
+
+`:id` adalah UUID laporan. Format UUID tidak valid →
+`VALIDATION_ERROR` (400).
+
+**Respons sukses — 200 OK:**
+
+```json
+{
+  "success": true,
+  "data": [
+    { "detik_ke": 0, "kecepatan_kbps": 52.1 },
+    { "detik_ke": 1, "kecepatan_kbps": 49.8 },
+    { "detik_ke": 2, "kecepatan_kbps": 47.3 }
+  ],
+  "meta": { "timestamp": "2026-11-17T15:30:35.000Z" }
+}
+```
+
+Sampel diurutkan `detik_ke` menaik. Array kosong (`[]`) bila
+laporan belum punya sampel (atau bukan tes bertahan — endpoint ini
+tidak memeriksa `durasi_tes_detik`, hanya mengembalikan sampel
+yang ada).
+
+**Respons galat:**
+
+| HTTP | Kode | Kondisi |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | `:id` bukan UUID yang valid. |
+| 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
+| 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
+| 404 | `NOT_FOUND` | Laporan tidak ada, sudah dihapus, atau bukan milik pengguna. |
+
 ---
 ## 5. Diagnosis AI
 
@@ -1219,9 +1320,27 @@ Worker merakit konteks dari riwayat pengguna (pemeriksaan terakhir
 Gemini. Kunci Gemini hanya ada sebagai secret Worker; tidak pernah
 ada di browser dan tidak pernah di repo.
 
-Bila Gemini gagal atau timeout, Worker mengembalikan
-`AI_TIDAK_TERSEDIA` (502) — jawaban tidak pernah dikarang.
-Pertanyaan yang gagal dijawab TIDAK disimpan ke riwayat.
+**Endpoint ini selalu menjawab 200 bila pertanyaan valid (K-23).**
+Bila Gemini gagal — kuota proyek habis, timeout 30 detik, galat
+jaringan, atau kunci belum diatur — Worker mengembalikan jawaban
+fallback dari aturan berbasis data pemeriksaan pengguna
+(`sumber_jawaban: "aturan"`), dengan label jujur bahwa jawaban itu
+bukan dari AI. Kode 502 `AI_TIDAK_TERSEDIA` sudah pensiun.
+Jawaban fallback TIDAK disimpan ke riwayat dan TIDAK memotong
+kuota harian.
+
+Tiga lapisan melindungi kuota Gemini bersama (model Flash-Lite,
+500 request/hari per proyek):
+
+1. Cache jawaban (tabel D1 `ai_cache`, 7 hari): pertanyaan yang
+   sama dari pengguna yang sama dengan data pemeriksaan yang sama
+   memakai jawaban tersimpan tanpa memanggil Gemini
+   (`sumber_jawaban: "cache"`). Kunci cache adalah SHA-256 dari
+   pertanyaan yang dinormalisasi + versi konteks + id pengguna +
+   sidik jari data pemeriksaan — cache sengaja per pengguna.
+2. Batas 20 pertanyaan/hari per pengguna (dihitung dari D1,
+   reset 00:00 UTC).
+3. Fallback aturan (di atas) saat Gemini gagal.
 
 **Bentuk objek diagnosis AI (dipakai di semua respons):**
 
@@ -1245,15 +1364,17 @@ Pertanyaan yang gagal dijawab TIDAK disimpan ke riwayat.
 | `jawaban` | string | Jawaban Gemini, Bahasa Indonesia. Ditampilkan frontend sebagai teks biasa (tanpa HTML). |
 | `dibuat_pada` | string (ISO 8601) | Waktu dibuat (server). |
 
-### 5.1 Tanya AI — `POST /ai/diagnose`
+### 5.1 Tanya AI — `POST /api/ai/diagnose`
+
+Alias: `POST /api/ai/tanya` (perilaku sama persis).
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `POST /ai/diagnose` |
+| Method + path | `POST /api/ai/diagnose` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Content-Type: application/json`, `Cookie: dokter_hp_session=TOKEN`. |
 | Rate limit | 20/hari per pengguna (kuota harian, reset 00:00 UTC). Selain itu batas tulis umum 60/menit. |
-| Timeout | Worker menunggu Gemini maksimum 30 detik; lebih dari itu → `AI_TIDAK_TERSEDIA` (502). |
+| Timeout | Worker menunggu Gemini maksimum 30 detik per percobaan; bila gagal → jawaban fallback 200 (bukan 502). |
 
 **Request body (JSON):**
 
@@ -1268,7 +1389,7 @@ Pertanyaan yang gagal dijawab TIDAK disimpan ke riwayat.
 
 | Field | Tipe | Wajib | Aturan |
 |---|---|---|---|
-| `pertanyaan` | string | Ya | 1–2000 karakter setelah dipangkas (trim). String kosong / hanya spasi → `VALIDATION_ERROR`. |
+| `pertanyaan` | string | Ya | 1–1000 karakter setelah dipangkas (trim). String kosong / hanya spasi → `VALIDATION_ERROR`. |
 | `health_check_id` | string (UUID) / null | Tidak | Bila terisi, harus UUID yang valid dan merujuk ke health check milik pengguna. Bila merujuk ke data orang lain atau tidak ada → `NOT_FOUND` (404). |
 
 **Respons sukses — 200 OK:**
@@ -1282,38 +1403,50 @@ Pertanyaan yang gagal dijawab TIDAK disimpan ke riwayat.
     "health_check_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
     "pertanyaan": "WiFi lemot padahal sinyal penuh, kenapa?",
     "jawaban": "Sinyal penuh belum tentu berarti cepat. ...",
-    "dibuat_pada": "2026-11-17T15:30:00.000Z"
+    "dibuat_pada": "2026-11-17T15:30:00.000Z",
+    "sumber_jawaban": "ai",
+    "sisa_hari_ini": 19,
+    "label_saran": "Jawaban ini adalah saran, bukan vonis pasti. Bila masalah berlanjut, pertimbangkan bantuan teknisi.",
+    "tersimpan": true
   },
   "meta": { "timestamp": "2026-11-17T15:30:00.000Z" }
 }
 ```
 
+| Field tambahan | Tipe | Keterangan |
+|---|---|---|
+| `sumber_jawaban` | string | Asal jawaban: `"ai"` (Gemini baru), `"cache"` (jawaban tersimpan 7 hari), atau `"aturan"` (fallback aturan saat Gemini gagal). |
+| `sisa_hari_ini` | integer | Sisa kuota pertanyaan hari ini setelah pertanyaan ini. Pada fallback (`"aturan"`) kuota tidak terpotong, jadi nilainya sama seperti sebelum pertanyaan. |
+| `label_saran` | string | Label kejujuran yang WAJIB ditampilkan frontend bersama jawaban: "Jawaban ini adalah saran, bukan vonis pasti. Bila masalah berlanjut, pertimbangkan bantuan teknisi." |
+| `tersimpan` | boolean | `true` bila tanya jawab ini disimpan ke riwayat (`"ai"`/`"cache"`); `false` pada fallback (`"aturan"`). |
+
 **Respons galat:**
 
 | HTTP | Kode | Kondisi |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | `pertanyaan` hilang/kosong/> 2000 karakter; `health_check_id` bukan UUID. |
+| 400 | `VALIDATION_ERROR` | `pertanyaan` hilang/kosong/> 1000 karakter; `health_check_id` bukan UUID. |
 | 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 | 404 | `NOT_FOUND` | `health_check_id` tidak ada atau bukan milik pengguna. |
 | 429 | `AI_QUOTA_HABIS` | Kuota 20/hari sudah habis. Header `Retry-After` berisi detik sampai reset 00:00 UTC. |
 | 429 | `RATE_LIMITED` | Melebihi batas tulis 60/menit. |
-| 502 | `AI_TIDAK_TERSEDIA` | Gemini galat/timeout. Pertanyaan tidak disimpan. |
 
-### 5.2 Riwayat diagnosis AI — `GET /ai/diagnoses`
+### 5.2 Riwayat diagnosis AI — `GET /api/ai/diagnoses`
+
+Alias: `GET /api/ai/riwayat` (perilaku sama persis).
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /ai/diagnoses` |
+| Method + path | `GET /api/ai/diagnoses` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
-| Query | `limit` (default 20, 1–100), `offset` (default 0, ≥ 0). Lihat 0.6. |
+| Query | `limit` (default 20, 1–100), `cursor` (halaman berikutnya, lihat 0.6). |
 | Rate limit | Batas baca: 300/menit per pengguna. |
 
-Hanya riwayat milik pengguna, terbaru dulu. Tidak ada endpoint
-hapus per diagnosis (riwayat AI ikut terhapus saat hapus akun,
-lihat 6.4).
+Hanya riwayat milik pengguna, terbaru dulu. Hapus per diagnosis
+lewat `DELETE /api/history/ai/:id` (lihat §7); riwayat AI juga
+ikut terhapus saat hapus akun (lihat 6.5).
 
 **Respons sukses — 200 OK:** envelope daftar dengan `data` berisi
 array objek diagnosis AI dan `meta.pagination` seperti 0.6.
@@ -1322,7 +1455,7 @@ array objek diagnosis AI dan `meta.pagination` seperti 0.6.
 
 | HTTP | Kode | Kondisi |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | `limit`/`offset` bukan angka atau `offset` negatif. |
+| 400 | `VALIDATION_ERROR` | `limit` bukan angka atau `cursor` tidak valid. |
 | 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 
@@ -1330,11 +1463,11 @@ array objek diagnosis AI dan `meta.pagination` seperti 0.6.
 
 ## 6. Akun
 
-### 6.1 Profil — `GET /account/profile`
+### 6.1 Profil — `GET /api/account/profile`
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /account/profile` |
+| Method + path | `GET /api/account/profile` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
@@ -1369,15 +1502,15 @@ array objek diagnosis AI dan `meta.pagination` seperti 0.6.
 | 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 
-**Catatan:** `/auth/me` (1.4) dan endpoint ini tumpang tindih
-dengan sengaja — `/auth/me` untuk pemulihan keadaan login
+**Catatan:** `/api/auth/me` (1.4) dan endpoint ini tumpang tindih
+dengan sengaja — `/api/auth/me` untuk pemulihan keadaan login
 (termasuk status kunci PIN), endpoint ini untuk halaman Pengaturan.
 
-### 6.2 Ubah nama — `PATCH /account/profile`
+### 6.2 Ubah nama — `PATCH /api/account/profile`
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `PATCH /account/profile` |
+| Method + path | `PATCH /api/account/profile` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Content-Type: application/json`, `Cookie: dokter_hp_session=TOKEN`. |
 | Rate limit | Batas tulis umum: 60/menit per pengguna. |
@@ -1412,7 +1545,7 @@ bentuknya dengan 6.1.
 | 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 
-### 6.3 Daftar sesi aktif — `GET /account/sessions`
+### 6.3 Daftar sesi aktif — `GET /api/account/sessions`
 
 Menampilkan semua sesi aktif milik pengguna (untuk halaman
 Pengaturan: "keluar dari sesi lain"). Sesi saat ini ditandai
@@ -1420,11 +1553,11 @@ Pengaturan: "keluar dari sesi lain"). Sesi saat ini ditandai
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /account/sessions` |
+| Method + path | `GET /api/account/sessions` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
-| Query | `limit` (default 20, 1–100), `offset` (default 0, ≥ 0). Lihat 0.6. |
+| Query | `limit` (default 20, 1–100), `cursor` (halaman berikutnya, lihat 0.6). |
 | Rate limit | Batas baca: 300/menit per pengguna. |
 
 **Respons sukses — 200 OK:**
@@ -1444,14 +1577,14 @@ Pengaturan: "keluar dari sesi lain"). Sesi saat ini ditandai
   ],
   "meta": {
     "timestamp": "2026-11-17T15:30:00.000Z",
-    "pagination": { "limit": 20, "offset": 0, "total": 1, "has_more": false }
+    "pagination": { "limit": 20, "next_cursor": null, "has_more": false }
   }
 }
 ```
 
 | Field | Tipe | Keterangan |
 |---|---|---|
-| `id` | string (UUID) | ID sesi (untuk `DELETE /account/sessions/:id`). |
+| `id` | string (UUID) | ID sesi (untuk `DELETE /api/account/sessions/:id`). |
 | `saat_ini` | boolean | `true` untuk sesi yang dipakai pada request ini. |
 | `user_agent` | string / null | User-Agent browser saat sesi dibuat. |
 | `ip_terakhir` | string / null | IP terakhir yang memakai sesi ini. |
@@ -1464,20 +1597,20 @@ pernah dikembalikan.
 
 | HTTP | Kode | Kondisi |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | `limit`/`offset` bukan angka atau `offset` negatif. |
+| 400 | `VALIDATION_ERROR` | `limit` bukan angka atau `cursor` tidak valid. |
 | 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 
-### 6.4 Keluar dari satu sesi — `DELETE /account/sessions/:id`
+### 6.4 Keluar dari satu sesi — `DELETE /api/account/sessions/:id`
 
 Menghapus satu sesi milik pengguna (misalnya sesi di perangkat
 lain). Menghapus sesi saat ini sama efeknya dengan keluar
-(`POST /auth/logout`) — frontend harus mengarahkan ke landing
+(`POST /api/auth/logout`) — frontend harus mengarahkan ke landing
 setelah itu.
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `DELETE /account/sessions/:id` |
+| Method + path | `DELETE /api/account/sessions/:id` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
@@ -1511,7 +1644,7 @@ menyertakan header penghapusan cookie (sama seperti 1.3).
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 | 404 | `NOT_FOUND` | Sesi tidak ada, sudah kedaluwarsa/dihapus, atau bukan milik pengguna. |
 
-### 6.5 Hapus akun — `DELETE /account`
+### 6.5 Hapus akun — `DELETE /api/account`
 
 Menghapus akun beserta seluruh data pengguna secara permanen
 (hard delete): profil, health checks, laporan WiFi + sampelnya,
@@ -1519,7 +1652,7 @@ diagnosis AI, semua sesi, dan PIN. Penghapusan tidak bisa dibatalkan.
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `DELETE /account` |
+| Method + path | `DELETE /api/account` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Content-Type: application/json`, `Cookie: dokter_hp_session=TOKEN`. |
 | Rate limit | Batas tulis umum: 60/menit per pengguna. |
@@ -1536,7 +1669,7 @@ diagnosis AI, semua sesi, dan PIN. Penghapusan tidak bisa dibatalkan.
 
 | Field | Tipe | Wajib | Aturan |
 |---|---|---|---|
-| `konfirmasi` | string | Ya | Harus persis `HAPUS` (huruf besar semua). Nilai lain → `KONFIRMASI_SALAH` (422). |
+| `konfirmasi` | string | Ya | Harus persis `HAPUS` atau `DELETE` (huruf besar semua; kata mengikuti bahasa aktif di frontend — K-26). Nilai lain → `KONFIRMASI_SALAH` (422). |
 
 **Respons sukses — 200 OK:**
 
@@ -1554,12 +1687,12 @@ diagnosis AI, semua sesi, dan PIN. Penghapusan tidak bisa dibatalkan.
 Header respons menyertakan penghapusan cookie (sama seperti 1.3).
 Frontend mengarahkan ke landing setelah berhasil.
 
-**Efek samping:** baris `users` dihapus; baris terkait ikut
-terhapus lewat foreign key cascade (`profiles`, `sessions`,
-`health_checks`, `wifi_reports` + `wifi_sustained_samples`,
-`ai_diagnoses`). Worker memastikan `PRAGMA foreign_keys = ON`
-aktif, atau menghapus baris anak secara eksplisit bila cascade
-tidak bisa diandalkan di D1.
+**Efek samping:** seluruh data dihapus eksplisit per tabel
+(Worker TIDAK bergantung pada foreign key cascade, walau
+`PRAGMA foreign_keys = ON` dicoba best-effort): sampel tes
+bertahan, penanda buka PIN (`pin_unlocks`) + penghitung gagal
+PIN (`pin_attempts`), diagnosis AI, laporan WiFi, pemeriksaan
+kesehatan, semua sesi, profil, lalu baris `users`.
 
 **Respons galat:**
 
@@ -1568,9 +1701,9 @@ tidak bisa diandalkan di D1.
 | 400 | `VALIDATION_ERROR` | `konfirmasi` hilang atau bukan string. |
 | 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
-| 422 | `KONFIRMASI_SALAH` | `konfirmasi` bukan `HAPUS`. |
+| 422 | `KONFIRMASI_SALAH` | `konfirmasi` bukan `HAPUS` atau `DELETE`. |
 
-### 6.6 Ekspor data — `GET /account/export`
+### 6.6 Ekspor data — `GET /api/account/export`
 
 Mengunduh seluruh data milik pengguna sebagai satu file JSON
 (profil, health checks, laporan WiFi beserta sampel tes bertahan,
@@ -1579,7 +1712,7 @@ ingin menyimpan salinan datanya.
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /account/export` |
+| Method + path | `GET /api/account/export` |
 | Auth | Sesi wajib, tidak terkunci PIN. |
 | Header request | `Cookie: dokter_hp_session=TOKEN`. |
 | Request body | Tidak ada. |
@@ -1656,9 +1789,9 @@ respons API biasa):
   diekspor.
 - Bila data sangat besar, Worker tetap mengembalikan satu file
   (tanpa paginasi) — batas praktis: ekspor dibatasi 5.000 baris
-  per tabel; bila melebihi, respons menambahkan field
-  `"terpotong": true` di tingkat atas dan frontend menampilkan
-  peringatan bahwa ekspor tidak lengkap.
+  per tabel dan 30.000 sampel tes bertahan; bila melebihi,
+  respons menambahkan field `"terpotong": true` di tingkat atas
+  dan frontend menampilkan peringatan bahwa ekspor tidak lengkap.
 - Nama file: `dokter-hp-export-YYYY-MM-DD.json` (tanggal UTC).
 
 **Respons galat (memakai envelope standar, bukan berkas):**
@@ -1669,24 +1802,180 @@ respons API biasa):
 | 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
 | 429 | `RATE_LIMITED` | Melebihi 5/hari. |
 
-**Catatan:** endpoint ini adalah tambahan dari penugasan tim
-kontrak API; belum ada di `ARCHITECTURE.md` §3.5. Lihat Changelog.
+**Catatan:** batas 5/hari ditegakkan lewat tabel D1 `rate_limits`
+(lihat 0.7) dan diperiksa SEBELUM query berat dijalankan —
+panggilan ke-6 dalam sehari ditolak 429 `RATE_LIMITED` dengan
+header `Retry-After` sampai reset 00:00 UTC, tanpa membebani D1.
 
 ---
-## 7. Utilitas (publik)
+## 7. Riwayat gabungan
+
+Satu endpoint untuk halaman Riwayat (`/riwayat`): tiga jenis data
+(pemeriksaan kesehatan, laporan WiFi, diagnosis AI) digabung dan
+diurutkan terbaru dulu oleh server, sehingga frontend tidak perlu
+memanggil tiga endpoint daftar dan menggabungkannya sendiri.
+
+### 7.1 Riwayat gabungan — `GET /api/history`
+
+| Aspek | Keterangan |
+|---|---|
+| Method + path | `GET /api/history` |
+| Auth | Sesi wajib, tidak terkunci PIN. |
+| Header request | `Cookie: dokter_hp_session=TOKEN`. |
+| Request body | Tidak ada. |
+| Query | `limit` (default 20, 1–100), `cursor` (halaman berikutnya, lihat 0.6), `jenis` (opsional: `kesehatan` / `wifi` / `ai` / `semua`; default `semua`). |
+| Rate limit | Batas baca: 300/menit per pengguna. |
+
+**Respons sukses — 200 OK:**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "jenis": "wifi",
+      "id": "9b2e3d4a-1c5f-4a6b-8d7e-0f1a2b3c4d5e",
+      "dibuat_pada": "2026-11-17T15:30:00.000Z",
+      "data": {
+        "ssid": "ACHA",
+        "kecepatan_koneksi_mbps": 65,
+        "kekuatan_sinyal": "kuat",
+        "channel": 6,
+        "dns": "1.1.1.1",
+        "kecepatan_unduh_kbps": 3.2,
+        "ping_ms": 42,
+        "rekomendasi": "Kecepatan unduh sangat lambat.",
+        "sumber": "web",
+        "durasi_tes_detik": null
+      }
+    },
+    {
+      "jenis": "kesehatan",
+      "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "dibuat_pada": "2026-11-17T15:25:00.000Z",
+      "data": {
+        "skor": 78,
+        "ringkasan": {
+          "wifi": { "status": "baik", "skor": 85, "sumber": "web" }
+        },
+        "sync_status": "synced"
+      }
+    },
+    {
+      "jenis": "ai",
+      "id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+      "dibuat_pada": "2026-11-17T15:20:00.000Z",
+      "data": {
+        "health_check_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "pertanyaan": "WiFi lemot padahal sinyal penuh, kenapa?",
+        "jawaban": "Sinyal penuh belum tentu berarti cepat. ..."
+      }
+    }
+  ],
+  "meta": {
+    "timestamp": "2026-11-17T15:30:00.000Z",
+    "pagination": { "limit": 20, "next_cursor": null, "has_more": false },
+    "jenis": "semua"
+  }
+}
+```
+
+| Field item | Tipe | Keterangan |
+|---|---|---|
+| `jenis` | string | `kesehatan` / `wifi` / `ai`. |
+| `id` | string (UUID) | ID baris sumber (untuk `DELETE /api/history/:jenis/:id`). |
+| `dibuat_pada` | string (ISO 8601) | Waktu baris sumber dibuat. |
+| `data` | object | Proyeksi ringkas baris sumber — HANYA field di bawah; `id`, `user_id`, `dibuat_pada`, `updated_at`, dan `deleted_at` tidak diulang di dalam `data` (id dan waktu ada di tingkat item). |
+
+Isi `data` per jenis:
+
+| Jenis | Field di `data` |
+|---|---|
+| `kesehatan` | `skor`, `ringkasan`, `sync_status`. |
+| `wifi` | `ssid`, `kecepatan_koneksi_mbps`, `kekuatan_sinyal`, `channel`, `dns`, `kecepatan_unduh_kbps`, `ping_ms`, `rekomendasi`, `sumber`, `durasi_tes_detik`. |
+| `ai` | `health_check_id`, `pertanyaan`, `jawaban`. |
+
+`meta.jenis` menggemakan parameter `jenis` yang diminta (atau
+`"semua"` bila tidak ada parameter). Urutan: terbaru dulu
+(`dibuat_pada` menurun, `id` menurun). Baris soft-delete tidak
+pernah muncul. Paginasi cursor (0.6) berlaku pada urutan gabungan:
+tiap jenis diambil `limit + 1` baris dengan klausa cursor yang
+sama, lalu digabung dan dipotong ke `limit`.
+
+**Respons galat:**
+
+| HTTP | Kode | Kondisi |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | `limit` bukan angka, `cursor` tidak valid, atau `jenis` bukan nilai yang dikenal. |
+| 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
+| 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
+
+### 7.2 Hapus satu entri riwayat — `DELETE /api/history/:jenis/:id`
+
+Operasi pendamping §7.1 (tidak bernomor tersendiri di §0.8):
+menghapus satu entri riwayat apa pun jenisnya — termasuk diagnosis
+AI, yang tidak punya endpoint hapus sendiri di §5.
+
+| Aspek | Keterangan |
+|---|---|
+| Method + path | `DELETE /api/history/:jenis/:id` |
+| Auth | Sesi wajib, tidak terkunci PIN. |
+| Header request | `Cookie: dokter_hp_session=TOKEN`. |
+| Request body | Tidak ada. |
+| Rate limit | Batas tulis umum: 60/menit per pengguna. |
+
+`:jenis` adalah `kesehatan`, `wifi`, atau `ai`; `:id` adalah UUID
+baris sumber.
+
+**Perilaku per jenis:**
+
+| Jenis | Perilaku hapus |
+|---|---|
+| `kesehatan` / `wifi` | Soft-delete: `deleted_at` diisi waktu saat ini. |
+| `ai` | Hapus permanen (tabel `ai_diagnoses` tidak punya kolom `deleted_at`). |
+
+**Respons sukses — 200 OK:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "a1b2c3d4-5678-90ab-cdef-1234567890ab",
+    "jenis": "ai",
+    "deleted": true,
+    "deleted_at": null
+  },
+  "meta": { "timestamp": "2026-11-17T15:35:00.000Z" }
+}
+```
+
+`deleted_at` berisi waktu soft-delete untuk `kesehatan`/`wifi`,
+dan `null` untuk `ai` (hapus permanen).
+
+**Respons galat:**
+
+| HTTP | Kode | Kondisi |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | `:jenis` bukan nilai yang dikenal atau `:id` bukan UUID yang valid. |
+| 401 | `UNAUTHORIZED` | Tidak ada sesi valid. |
+| 403 | `SESSION_LOCKED` | Sesi terkunci PIN. |
+| 404 | `NOT_FOUND` | Entri tidak ada, sudah dihapus, atau bukan milik pengguna. |
+
+---
+## 8. Utilitas (publik)
 
 Endpoint publik tanpa sesi. Tidak menyentuh D1 (kecuali dinyatakan
 lain), sehingga tetap menjawab saat database sibuk dan murah untuk
 dipanggil berulang.
 
-### 7.1 Liveness — `GET /health`
+### 8.1 Liveness — `GET /api/health`
 
 Dipakai pemantau uptime dan banner "Tidak tersambung ke server" di
 frontend. Tanpa akses D1 — hanya membuktikan Worker hidup.
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /health` |
+| Method + path | `GET /api/health` |
 | Auth | Publik (tanpa sesi). |
 | Header request | Tidak ada header khusus. |
 | Request body | Tidak ada. |
@@ -1705,7 +1994,7 @@ frontend. Tanpa akses D1 — hanya membuktikan Worker hidup.
 **Respons galat:** tidak ada respons galat khusus — bila Worker
 tidak menjawab sama sekali, pemantau mencatat downtime.
 
-### 7.2 Latensi HTTP — `GET /ping`
+### 8.2 Latensi HTTP — `GET /api/ping`
 
 Target pengukuran latensi HTTP dari browser. Frontend memanggilnya
 3x dan mengambil median sebagai `ping_ms` (lihat 4.1). Respons
@@ -1713,7 +2002,7 @@ dibuat sekecil mungkin dan tanpa akses D1.
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /ping` |
+| Method + path | `GET /api/ping` |
 | Auth | Publik (tanpa sesi). |
 | Header request | Tidak ada header khusus. |
 | Request body | Tidak ada. |
@@ -1737,7 +2026,7 @@ dibuat sekecil mungkin dan tanpa akses D1.
 **Catatan:** latensi diukur frontend dari waktu round-trip request,
 bukan dari field `t`. Field `t` hanya penanda waktu server.
 
-### 7.3 Info speedtest — `GET /speedtest/info`
+### 8.3 Info speedtest — `GET /api/speedtest/info`
 
 Memberi tahu frontend file tes kecepatan mana yang tersedia dan
 ukurannya, agar frontend tidak mengarang ukuran file. File tes
@@ -1746,7 +2035,7 @@ sendiri disajikan sebagai aset statis dari Pages yang sama
 
 | Aspek | Keterangan |
 |---|---|
-| Method + path | `GET /speedtest/info` |
+| Method + path | `GET /api/speedtest/info` |
 | Auth | Publik (tanpa sesi). |
 | Header request | Tidak ada header khusus. |
 | Request body | Tidak ada. |
@@ -1762,7 +2051,8 @@ sendiri disajikan sebagai aset statis dari Pages yang sama
     "ukuran_byte": 1048576,
     "ukuran_label": "1 MB",
     "timeout_detik": 15,
-    "tes_bertahan_detik": 30
+    "tes_bertahan_detik": 30,
+    "ip_publik": "203.0.113.42"
   },
   "meta": { "timestamp": "2026-11-17T15:30:00.000Z" }
 }
@@ -1775,15 +2065,15 @@ sendiri disajikan sebagai aset statis dari Pages yang sama
 | `ukuran_label` | string | Label untuk ditampilkan. |
 | `timeout_detik` | integer | Timeout tes unduh (15 detik, sesuai PRODUCT.md §4.4). |
 | `tes_bertahan_detik` | integer | Durasi tes bertahan (30 detik, sesuai PRODUCT.md §4.4). |
+| `ip_publik` | string / null | IP publik pemanggil, dibaca dari header `CF-Connecting-IP` (K-25). `null` bila header tidak ada (misalnya saat dijalankan lokal tanpa Cloudflare). |
 
-**Catatan:** endpoint ini adalah tambahan dari penugasan tim
-kontrak API; belum ada di `ARCHITECTURE.md` §3.6. File
-`speedtest-1mb.bin` sendiri disajikan Pages (aset statis), bukan
-Worker. Lihat Changelog.
+**Catatan:** file `speedtest-1mb.bin` sendiri disajikan Pages
+(aset statis), bukan Worker. Service worker frontend tidak pernah
+men-cache file ini agar tes mengukur koneksi, bukan cache lokal.
 
 ---
 
-## 8. Contoh curl per grup
+## 9. Contoh curl per grup
 
 Basis URL contoh: `https://api.dokter-hp.example.com` (ganti
 dengan basis nyata). Token sesi memakai placeholder `TOKEN` —
@@ -1797,193 +2087,251 @@ Autentikasi pada contoh memakai header cookie:
 -H "Cookie: dokter_hp_session=TOKEN"
 ```
 
-### 8.1 Auth Google dan sesi
+### 9.1 Auth Google dan sesi
 
 ```bash
 # Mulai masuk Google (buka di browser, bukan curl — responsnya redirect):
-# https://api.dokter-hp.example.com/auth/google
+# https://api.dokter-hp.example.com/api/auth/google
 
 # Info pengguna saat ini:
 curl -s -H "Cookie: dokter_hp_session=TOKEN" \
-  https://api.dokter-hp.example.com/auth/me
+  https://api.dokter-hp.example.com/api/auth/me
 
 # Keluar:
 curl -s -X POST -H "Cookie: dokter_hp_session=TOKEN" \
-  https://api.dokter-hp.example.com/auth/logout
+  https://api.dokter-hp.example.com/api/auth/logout
 ```
 
-### 8.2 PIN
+### 9.2 PIN
 
 ```bash
 # Atur PIN:
 curl -s -X POST -H "Cookie: dokter_hp_session=TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"pin": "123456"}' \
-  https://api.dokter-hp.example.com/auth/pin/set
+  https://api.dokter-hp.example.com/api/auth/pin/set
 
 # Verifikasi PIN:
 curl -s -X POST -H "Cookie: dokter_hp_session=TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"pin": "123456"}' \
-  https://api.dokter-hp.example.com/auth/pin/verify
+  https://api.dokter-hp.example.com/api/auth/pin/verify
 
 # Hapus PIN:
 curl -s -X POST -H "Cookie: dokter_hp_session=TOKEN" \
-  https://api.dokter-hp.example.com/auth/pin/delete
+  https://api.dokter-hp.example.com/api/auth/pin/delete
 ```
 
-### 8.3 Health checks
+### 9.3 Health checks
 
 ```bash
 # Buat health check:
 curl -s -X POST -H "Cookie: dokter_hp_session=TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"skor": 78, "ringkasan": {"wifi": {"status": "baik", "skor": 85, "sumber": "web"}}}' \
-  https://api.dokter-hp.example.com/health-checks
+  https://api.dokter-hp.example.com/api/health-checks
 
 # Daftar health checks:
 curl -s -H "Cookie: dokter_hp_session=TOKEN" \
-  "https://api.dokter-hp.example.com/health-checks?limit=20&offset=0"
+  "https://api.dokter-hp.example.com/api/health-checks?limit=20"
 
 # Detail health check:
 curl -s -H "Cookie: dokter_hp_session=TOKEN" \
-  https://api.dokter-hp.example.com/health-checks/7c9e6679-7425-40de-944b-e07fc1f90ae7
+  https://api.dokter-hp.example.com/api/health-checks/7c9e6679-7425-40de-944b-e07fc1f90ae7
 
 # Hapus health check:
 curl -s -X DELETE -H "Cookie: dokter_hp_session=TOKEN" \
-  https://api.dokter-hp.example.com/health-checks/7c9e6679-7425-40de-944b-e07fc1f90ae7
+  https://api.dokter-hp.example.com/api/health-checks/7c9e6679-7425-40de-944b-e07fc1f90ae7
 ```
 
-### 8.4 WiFi
+### 9.4 WiFi
 
 ```bash
 # Buat laporan WiFi:
 curl -s -X POST -H "Cookie: dokter_hp_session=TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"ssid": "ACHA", "kecepatan_koneksi_mbps": 65, "kekuatan_sinyal": "kuat", "channel": 6, "dns": "1.1.1.1", "ping_ms": 42, "kecepatan_unduh_kbps": 3.2, "sumber": "web"}' \
-  https://api.dokter-hp.example.com/wifi-reports
+  https://api.dokter-hp.example.com/api/wifi-reports
 
 # Daftar laporan WiFi:
 curl -s -H "Cookie: dokter_hp_session=TOKEN" \
-  "https://api.dokter-hp.example.com/wifi-reports?limit=20&offset=0"
+  "https://api.dokter-hp.example.com/api/wifi-reports?limit=20"
 
 # Detail laporan WiFi (termasuk sampel tes bertahan):
 curl -s -H "Cookie: dokter_hp_session=TOKEN" \
-  https://api.dokter-hp.example.com/wifi-reports/9b2e3d4a-1c5f-4a6b-8d7e-0f1a2b3c4d5e
+  https://api.dokter-hp.example.com/api/wifi-reports/9b2e3d4a-1c5f-4a6b-8d7e-0f1a2b3c4d5e
+
+# Daftar sampel tes bertahan saja:
+curl -s -H "Cookie: dokter_hp_session=TOKEN" \
+  https://api.dokter-hp.example.com/api/wifi-reports/9b2e3d4a-1c5f-4a6b-8d7e-0f1a2b3c4d5e/samples
 
 # Hapus laporan WiFi:
 curl -s -X DELETE -H "Cookie: dokter_hp_session=TOKEN" \
-  https://api.dokter-hp.example.com/wifi-reports/9b2e3d4a-1c5f-4a6b-8d7e-0f1a2b3c4d5e
+  https://api.dokter-hp.example.com/api/wifi-reports/9b2e3d4a-1c5f-4a6b-8d7e-0f1a2b3c4d5e
 
 # Buat laporan tes bertahan 30 detik, lalu kirim sampelnya:
 curl -s -X POST -H "Cookie: dokter_hp_session=TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"ssid": "ACHA", "ping_ms": 42, "kecepatan_unduh_kbps": 48.5, "sumber": "web", "durasi_tes_detik": 30}' \
-  https://api.dokter-hp.example.com/wifi-reports
+  https://api.dokter-hp.example.com/api/wifi-reports
 
 curl -s -X POST -H "Cookie: dokter_hp_session=TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"samples": [{"detik_ke": 0, "kecepatan_kbps": 52.1}, {"detik_ke": 1, "kecepatan_kbps": 49.8}]}' \
-  https://api.dokter-hp.example.com/wifi-reports/9b2e3d4a-1c5f-4a6b-8d7e-0f1a2b3c4d5e/samples
+  https://api.dokter-hp.example.com/api/wifi-reports/9b2e3d4a-1c5f-4a6b-8d7e-0f1a2b3c4d5e/samples
 ```
 
-### 8.5 AI
+### 9.5 AI
 
 ```bash
 # Tanya AI:
 curl -s -X POST -H "Cookie: dokter_hp_session=TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"pertanyaan": "WiFi lemot padahal sinyal penuh, kenapa?"}' \
-  https://api.dokter-hp.example.com/ai/diagnose
+  https://api.dokter-hp.example.com/api/ai/diagnose
 
 # Riwayat diagnosis AI:
 curl -s -H "Cookie: dokter_hp_session=TOKEN" \
-  "https://api.dokter-hp.example.com/ai/diagnoses?limit=20&offset=0"
+  "https://api.dokter-hp.example.com/api/ai/diagnoses?limit=20"
 ```
 
-### 8.6 Akun
+### 9.6 Akun
 
 ```bash
 # Profil:
 curl -s -H "Cookie: dokter_hp_session=TOKEN" \
-  https://api.dokter-hp.example.com/account/profile
+  https://api.dokter-hp.example.com/api/account/profile
 
 # Ubah nama:
 curl -s -X PATCH -H "Cookie: dokter_hp_session=TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"nama": "Adip RMX"}' \
-  https://api.dokter-hp.example.com/account/profile
+  https://api.dokter-hp.example.com/api/account/profile
 
 # Daftar sesi aktif:
 curl -s -H "Cookie: dokter_hp_session=TOKEN" \
-  https://api.dokter-hp.example.com/account/sessions
+  https://api.dokter-hp.example.com/api/account/sessions
 
 # Keluar dari satu sesi:
 curl -s -X DELETE -H "Cookie: dokter_hp_session=TOKEN" \
-  https://api.dokter-hp.example.com/account/sessions/e5f6a7b8-1234-5678-90ab-cdef12345678
+  https://api.dokter-hp.example.com/api/account/sessions/e5f6a7b8-1234-5678-90ab-cdef12345678
 
 # Ekspor data:
 curl -s -H "Cookie: dokter_hp_session=TOKEN" \
   -o dokter-hp-export.json \
-  https://api.dokter-hp.example.com/account/export
+  https://api.dokter-hp.example.com/api/account/export
 
 # Hapus akun (tidak bisa dibatalkan):
 curl -s -X DELETE -H "Cookie: dokter_hp_session=TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"konfirmasi": "HAPUS"}' \
-  https://api.dokter-hp.example.com/account
+  https://api.dokter-hp.example.com/api/account
 ```
 
-### 8.7 Utilitas
+### 9.7 Utilitas
 
 ```bash
 # Liveness:
-curl -s https://api.dokter-hp.example.com/health
+curl -s https://api.dokter-hp.example.com/api/health
 
 # Latensi HTTP:
-curl -s https://api.dokter-hp.example.com/ping
+curl -s https://api.dokter-hp.example.com/api/ping
 
 # Info speedtest:
-curl -s https://api.dokter-hp.example.com/speedtest/info
+curl -s https://api.dokter-hp.example.com/api/speedtest/info
+```
+
+### 9.8 Riwayat gabungan
+
+```bash
+# 100 entri terbaru, semua jenis:
+curl -s -H "Cookie: dokter_hp_session=TOKEN" \
+  "https://api.dokter-hp.example.com/api/history?limit=100"
+
+# Hanya tes WiFi, halaman berikutnya (cursor dari meta.pagination.next_cursor):
+curl -s -H "Cookie: dokter_hp_session=TOKEN" \
+  "https://api.dokter-hp.example.com/api/history?jenis=wifi&limit=20&cursor=CURSOR"
+
+# Hapus satu entri diagnosis AI:
+curl -s -X DELETE -H "Cookie: dokter_hp_session=TOKEN" \
+  https://api.dokter-hp.example.com/api/history/ai/a1b2c3d4-5678-90ab-cdef-1234567890ab
 ```
 
 ---
 
-## 9. Hal yang masih terbuka
+## 10. Hal yang masih terbuka
 
 1. **Basis URL nyata** — domain/subdomain Worker belum diputuskan
    (lihat `ARCHITECTURE.md` §9 poin 1). Semua contoh memakai
    placeholder `api.dokter-hp.example.com`.
-2. **Jumlah endpoint di ARCHITECTURE.md** — dokumen arsitektur
-   menyebut 24 endpoint, tetapi tabel §3-nya berisi 25. Dokumen ini
-   mendokumentasikan 25 itu ditambah 2 endpoint baru (ekspor data,
-   info speedtest) sehingga total 27. Koordinator perlu mengonfirmasi
-   apakah angka 24 adalah kesalahan hitung atau ada satu endpoint
-   yang memang tidak jadi dibangun.
-3. **Endpoint baru belum ada di ARCHITECTURE.md** — `GET
-   /account/export` dan `GET /speedtest/info` ditambahkan atas
-   penugasan tim ini. Perlu persetujuan koordinator dan pencatatan
-   di `ARCHITECTURE.md` §3 (atau penghapusan bila tidak disetujui).
-4. **Implementasi rate limit** — tabel D1 vs fitur platform belum
-   diputuskan (lihat `ARCHITECTURE.md` §9 poin 6). Kontrak ini hanya
-   menetapkan batas dan bentuk respons 429.
-5. **Nama dari Google vs nama manual** — kontrak ini menetapkan
-   nama manual tidak ditimpa nama Google pada login berikutnya
-   (lihat 6.2). Perlu konfirmasi tim implementasi bahwa Worker
-   membedakan pengguna baru dan pengguna lama dengan benar.
-6. **Sesi terkunci dan endpoint PIN** — kontrak ini mengizinkan
-   `/auth/me`, `/auth/pin/set`, `/auth/pin/verify`,
-   `/auth/pin/delete`, dan `/auth/logout` dipanggil saat sesi
+2. **Sesi terkunci dan endpoint PIN** — kontrak ini mengizinkan
+   `/api/auth/me`, `/api/auth/pin/set`, `/api/auth/pin/verify`,
+   `/api/auth/pin/delete`, dan `/api/auth/logout` dipanggil saat sesi
    terkunci; semua endpoint lain menolak dengan `SESSION_LOCKED`.
    Perlu uji eksplisit di implementasi.
-7. **Ekspor data: batas 5.000 baris per tabel** — angka ini adalah
+3. **Ekspor data: batas 5.000 baris per tabel** — angka ini adalah
    keputusan kontrak (batas praktis), belum diuji terhadap kuota
    baca D1. Tim implementasi perlu memvalidasi saat membangun.
-8. **Sinkron APK** — di luar kontrak ini (fase berikutnya, lihat
+4. **Sinkron APK** — di luar kontrak ini (fase berikutnya, lihat
    `ARCHITECTURE.md` §9 poin 5). Bila endpoint sinkron ditambahkan
    nanti, dokumen ini perlu revisi.
+5. **Hitungan endpoint 29 vs 30** — dokumen ini menomori 29
+   endpoint, tetapi total rute method+path yang benar-benar ada
+   adalah 30 karena `DELETE /api/history/:jenis/:id` (§7.2)
+   didokumentasikan sebagai operasi pendamping tanpa nomor.
+   Koordinator perlu memutuskan: beri nomor 30, atau tetap
+   pendamping tanpa nomor.
 
-## 10. Changelog dokumen
+**Sudah terselesaikan di Wave 3b (dipindah dari daftar terbuka):**
+
+- Total endpoint: 29 bernomor (K-43) — selisih hitungan 24/25/27
+  di versi awal sudah diluruskan; ekspor data dan info speedtest
+  kini tercatat di `ARCHITECTURE.md` §3.
+- Implementasi rate limit: tabel D1 `rate_limits` (K-02, K-42,
+  K-59) — bukan KV; kode kanonis 429 `RATE_LIMITED`.
+- Nama dari Google vs nama manual: terkonfirmasi di implementasi —
+  nama Google hanya dipakai untuk pengguna baru (K-03).
+
+## 11. Changelog dokumen
+
+### 18 November 2026 — Wave 3b (Tim Integrasi)
+
+- Awalan `/api` di semua path (K-07); alias AI kanonis
+  `POST /api/ai/diagnose` + `GET /api/ai/diagnoses` dengan alias
+  `/api/ai/tanya` + `/api/ai/riwayat`; path tanpa `/api` dihapus
+  (K-37).
+- Total 29 endpoint bernomor: tambah `GET /api/history` (#28,
+  seksi baru §7) dan `GET /api/wifi-reports/:id/samples` (#29,
+  §4.6); `DELETE /api/history/:jenis/:id` didokumentasikan di
+  §7.2 sebagai operasi pendamping (lihat §10 poin 5).
+- Paginasi cursor keyset di semua endpoint daftar (K-32, K-38):
+  §0.6 ditulis ulang (param `limit` + `cursor`, meta
+  `{limit, next_cursor, has_more}` di `meta.pagination`); offset
+  + `total` dipensiunkan.
+- Diagnosis AI selalu 200 (K-23): 502 `AI_TIDAK_TERSEDIA`
+  pensiun; §5 ditulis ulang (fallback aturan, cache 7 hari,
+  field `sumber_jawaban`/`sisa_hari_ini`/`label_saran`/
+  `tersimpan`, pertanyaan 1–1000 karakter per K-36).
+- Kode galat kanon final (K-39/K-47/K-59): `CONFLICT` 409 untuk
+  PIN belum diatur; `PIN_BELUM_DIATUR`, `SESI_TIDAK_VALID`,
+  `RATE_LIMIT_EXCEEDED`, `PIN_SUDAH_DIATUR`, dan 405
+  `METHOD_NOT_ALLOWED` dipensiunkan; rate limit kanonis 429
+  `RATE_LIMITED` via tabel D1 `rate_limits` (K-02, K-42).
+- Auth: cookie sesi `SameSite=None` + cek Origin di endpoint
+  mutasi (K-50); CORS dari `ALLOWED_ORIGIN` (K-49); mekanisme
+  kunci PIN diluruskan ke tabel `pin_unlocks`/`pin_attempts`
+  (bukan kolom `terkunci`/`users.pin_*`); pengguna dikunci
+  `email` + provider (bukan `google_sub`); nama Google hanya
+  untuk pengguna baru; ketiga cookie OAuth dihapus di semua jalur
+  keluar callback; cookie OAuth ber-Path `/api/auth`.
+- Akun: hapus akun terima `HAPUS` atau `DELETE` (K-26); ekspor
+  5/hari dengan cek batas sebelum query berat + batas 30.000
+  sampel; daftar sesi memakai kolom `user_agent`/`ip_terakhir`
+  asli (K-44).
+- Utilitas menjadi §8 (renumber karena §7 baru); `GET
+  /api/speedtest/info` tambah field `ip_publik` (K-25).
+- Contoh curl (§9) memakai awalan `/api` dan cursor; tambah
+  §9.8 riwayat gabungan.
 
 ### 17 November 2026 — Versi awal (Fase 1)
 

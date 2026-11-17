@@ -1,9 +1,12 @@
 // apps/api/src/auth/session.ts
 // Manajemen sesi login Dokter HP Web App (Cloudflare Worker + D1).
 //
-// Skema yang dipakai adalah migrasi nyata apps/api/migrations/0001_init.sql:
-//   users(id, email UNIQUE, nama, provider, pin_hash, pin_salt, dibuat_pada)
-//   sessions(id, user_id, token_hash UNIQUE, expires_at, dibuat_pada)
+// Skema yang dipakai adalah migrasi nyata apps/api/migrations:
+//   0001_init.sql:
+//     users(id, email UNIQUE, nama, provider, pin_hash, pin_salt, dibuat_pada)
+//     sessions(id, user_id, token_hash UNIQUE, expires_at, dibuat_pada)
+//   0004_pin_rate_sessions.sql menambah kolom sessions.user_agent
+//   dan sessions.ip_terakhir (K-44).
 // Kolom dibuat_pada TIDAK punya nilai bawaan di migrasi, jadi semua
 // INSERT di modul ini mengisi dibuat_pada secara eksplisit.
 //
@@ -11,16 +14,16 @@
 // - Token sesi mentah (32 byte acak) TIDAK PERNAH disimpan di D1.
 //   Yang disimpan hanya SHA-256 hex dari token.
 // - Token mentah hanya ada di cookie HttpOnly pengguna.
-// - Cookie: HttpOnly, Secure, SameSite=Lax, Path=/, Max-Age 30 hari.
+// - Cookie: HttpOnly, Secure, SameSite=None, Path=/, Max-Age 30 hari.
 // - Sesi kedaluwarsa 30 hari sejak dibuat.
 //
-// Catatan SameSite: nilai Lax mengasumsikan frontend dan API berada
-// di domain yang sama (misalnya dua subdomain dari satu domain).
-// Bila keduanya berakhir di domain registrable yang berbeda
-// (misalnya pages.dev dan workers.dev), cookie tidak akan terkirim
-// pada fetch lintas situs dan nilai ini harus diubah menjadi None
-// (lihat konstanta COOKIE_SAME_SITE). Keputusan akhir ada di tim
-// integrasi saat domain diputuskan.
+// Catatan SameSite (keputusan koordinator K-50): frontend (Cloudflare
+// Pages) dan API (Cloudflare Workers) berada di domain registrable
+// yang berbeda, sehingga cookie sesi WAJIB SameSite=None agar
+// terkirim pada fetch lintas situs; Secure wajib menyertainya.
+// Cookie OAuth (state/verifier/redirect) TETAP SameSite=Lax karena
+// hanya dipakai dalam alur redirect di domain API sendiri — rute
+// auth mengesetnya secara eksplisit (lihat routes.ts).
 //
 // Modul ini juga memuat tipe EnvAuth (binding Worker yang dibutuhkan
 // modul auth), tipe baris D1, dan helper kriptografi bersama (SHA-256)
@@ -79,13 +82,15 @@ export interface BarisPengguna {
   dibuat_pada: string;
 }
 
-/** Baris tabel sessions (sesuai migrasi 0001_init.sql). */
+/** Baris tabel sessions (0001 + kolom 0004 user_agent/ip_terakhir). */
 export interface BarisSesi {
   id: string;
   user_id: string;
   token_hash: string;
   expires_at: string;
   dibuat_pada: string;
+  user_agent: string | null;
+  ip_terakhir: string | null;
 }
 
 /** Nama cookie sesi. */
@@ -97,8 +102,8 @@ export const MASA_BERLAKU_SESI_DETIK = 30 * 24 * 60 * 60;
 /** Panjang token sesi mentah dalam byte. */
 export const PANJANG_TOKEN_BYTE = 32;
 
-/** Nilai SameSite untuk cookie sesi. Lihat catatan di kepala file. */
-export const COOKIE_SAME_SITE = 'Lax';
+/** Nilai SameSite untuk cookie sesi: None (K-50, lintas domain). */
+export const COOKIE_SAME_SITE = 'None';
 
 /** Penyedia identitas untuk masuk Google (kolom users.provider). */
 export const PROVIDER_GOOGLE = 'google';
@@ -229,7 +234,7 @@ export function bacaTokenDariCookie(headerCookie: string | null | undefined): st
   return bacaNilaiCookie(headerCookie, NAMA_COOKIE_SESI);
 }
 
-/** Merakit cookie sesi (HttpOnly, Secure, SameSite=Lax, 30 hari). */
+/** Merakit cookie sesi (HttpOnly, Secure, SameSite=None, 30 hari). */
 export function buatCookieSesi(token: string): string {
   return buatCookie(NAMA_COOKIE_SESI, token, { maxAgeDetik: MASA_BERLAKU_SESI_DETIK });
 }
@@ -248,6 +253,10 @@ export interface OpsiBuatSesi {
   idPengguna: string;
   /** Waktu pembuatan (untuk pengujian); bawaan waktu saat ini. */
   sekarang?: Date;
+  /** Header User-Agent saat sesi dibuat (K-44; null bila tidak ada). */
+  userAgent?: string | null;
+  /** Alamat IP saat sesi dibuat, dari CF-Connecting-IP (K-44). */
+  ipTerakhir?: string | null;
 }
 
 export interface HasilBuatSesi {
@@ -273,12 +282,14 @@ export async function buatSesi(db: DbD1, opsi: OpsiBuatSesi): Promise<HasilBuatS
   const id = crypto.randomUUID();
   const waktu = sekarang.toISOString();
   const kedaluwarsaIso = kedaluwarsa.toISOString();
+  const userAgent = opsi.userAgent ?? null;
+  const ipTerakhir = opsi.ipTerakhir ?? null;
   await db
     .prepare(
-      'INSERT INTO sessions (id, user_id, token_hash, expires_at, dibuat_pada) ' +
-        'VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO sessions (id, user_id, token_hash, expires_at, dibuat_pada, user_agent, ip_terakhir) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?)',
     )
-    .bind(id, opsi.idPengguna, tokenHash, kedaluwarsaIso, waktu)
+    .bind(id, opsi.idPengguna, tokenHash, kedaluwarsaIso, waktu, userAgent, ipTerakhir)
     .run();
   const sesi: BarisSesi = {
     id,
@@ -286,6 +297,8 @@ export async function buatSesi(db: DbD1, opsi: OpsiBuatSesi): Promise<HasilBuatS
     token_hash: tokenHash,
     expires_at: kedaluwarsaIso,
     dibuat_pada: waktu,
+    user_agent: userAgent,
+    ip_terakhir: ipTerakhir,
   };
   return { sesi, token, kedaluwarsaPada: kedaluwarsaIso };
 }
@@ -313,7 +326,7 @@ export async function validasiSesi(
   const tokenHash = await hashToken(token);
   const sesi = await db
     .prepare(
-      'SELECT id, user_id, token_hash, expires_at, dibuat_pada ' +
+      'SELECT id, user_id, token_hash, expires_at, dibuat_pada, user_agent, ip_terakhir ' +
         'FROM sessions WHERE token_hash = ?',
     )
     .bind(tokenHash)

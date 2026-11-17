@@ -209,7 +209,7 @@ Aturan main yang dicantumkan di deskripsi Discussions:
 
 ### 4.2 Template issue — laporan bug
 
-Simpan sebagai `.github/ISSUE_TEMPLATE/laporan-bug.md` di repo.
+Simpan sebagai `.github/ISSUE_TEMPLATE/bug_report.yml` di repo (form YAML; lihat juga `feature_request.yml` dan `config.yml`).
 
 ```markdown
 ---
@@ -248,7 +248,7 @@ di gambar (email, nomor HP, alamat).
 
 ### 4.3 Template issue — permintaan fitur
 
-Simpan sebagai `.github/ISSUE_TEMPLATE/permintaan-fitur.md` di repo.
+Simpan sebagai `.github/ISSUE_TEMPLATE/feature_request.yml` di repo (form YAML; lihat juga `bug_report.yml` dan `config.yml`).
 
 ```markdown
 ---

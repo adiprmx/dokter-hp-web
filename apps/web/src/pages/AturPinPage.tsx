@@ -7,14 +7,14 @@ import {
 } from "react";
 import { Link } from "react-router-dom";
 import {
-  GalatApi,
   PESAN_GALAT_UMUM,
   PESAN_PIN_TIDAK_VALID,
   PESAN_TANPA_KONEKSI,
-  panggilApi,
   validasiFormatPin,
   type InfoPengguna,
 } from "../lib/pin";
+import { ApiError, panggilApi } from "../lib/api";
+import { Button } from "../components/ui/Button";
 
 // Layar atur/ubah/hapus PIN (/pengaturan/pin): atur PIN baru atau ubah PIN
 // lama (POST /api/auth/pin/set), hapus PIN (POST /api/auth/pin/delete),
@@ -65,7 +65,7 @@ export default function AturPinPage() {
       setPinDiatur(saya.pin_diatur);
       setMemuat(false);
     } catch (galat) {
-      if (galat instanceof GalatApi && galat.status === 401) {
+      if (galat instanceof ApiError && galat.status === 401) {
         setSesiHabis(true);
         setMemuat(false);
         return;
@@ -116,12 +116,12 @@ export default function AturPinPage() {
       setPinBaru("");
       setPinUlang("");
     } catch (galat) {
-      if (galat instanceof GalatApi) {
+      if (galat instanceof ApiError) {
         if (galat.status === 401) {
           setSesiHabis(true);
           return;
         }
-        if (galat.kode === "VALIDATION_ERROR" || galat.kode === "PIN_TIDAK_VALID") {
+        if (galat.code === "VALIDATION_ERROR" || galat.code === "PIN_TIDAK_VALID") {
           setGalatPin(PESAN_PIN_TIDAK_VALID);
           pinBaruRef.current?.focus();
           return;
@@ -147,12 +147,12 @@ export default function AturPinPage() {
       setPinDiatur(false);
       setTampilKonfirmasi(false);
     } catch (galat) {
-      if (galat instanceof GalatApi) {
+      if (galat instanceof ApiError) {
         if (galat.status === 401) {
           setSesiHabis(true);
           return;
         }
-        if (galat.kode === "CONFLICT") {
+        if (galat.code === "CONFLICT") {
           // PIN sudah tidak ada: keadaan akhir sama dengan terhapus.
           setSukses("PIN berhasil dihapus.");
           setPinDiatur(false);
@@ -170,17 +170,17 @@ export default function AturPinPage() {
 
   if (memuat) {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
         <div role="status" className="text-center text-base text-zinc-400">
           Memuat…
         </div>
-      </main>
+      </div>
     );
   }
 
   if (sesiHabis) {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
         <h1 className="text-2xl font-bold tracking-tight text-white">
           PIN aplikasi
         </h1>
@@ -196,13 +196,13 @@ export default function AturPinPage() {
         >
           Masuk
         </Link>
-      </main>
+      </div>
     );
   }
 
   if (gagalMuat) {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
         <h1 className="text-2xl font-bold tracking-tight text-white">
           PIN aplikasi
         </h1>
@@ -212,19 +212,19 @@ export default function AturPinPage() {
         >
           {pesan ?? "Data tidak bisa dimuat. Coba lagi."}
         </div>
-        <button
-          type="button"
+        <Button
           onClick={() => void periksaSesi()}
-          className={`mt-6 min-h-[48px] w-full rounded-xl bg-white px-4 py-3 text-base font-semibold text-black ${CINCIN_FOKUS}`}
+          fullWidth
+          className={`mt-6 ${CINCIN_FOKUS}`}
         >
           Coba lagi
-        </button>
-      </main>
+        </Button>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
+    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
       <h1
         id="judul-atur-pin"
         tabIndex={-1}
@@ -282,7 +282,7 @@ export default function AturPinPage() {
             }}
             aria-invalid={galatPin !== null}
             aria-describedby={galatPin ? "galat-pin-baru" : undefined}
-            className={`mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3 text-lg tracking-widest text-white placeholder-zinc-400 disabled:opacity-50 ${CINCIN_FOKUS}`}
+            className={`mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3 text-lg tracking-widest text-white placeholder-zinc-400 disabled:bg-[#27272a] disabled:text-[#a1a1aa] disabled:placeholder-zinc-500 ${CINCIN_FOKUS}`}
           />
           {galatPin && (
             <p id="galat-pin-baru" role="alert" className="mt-2 text-sm text-red-400">
@@ -313,7 +313,7 @@ export default function AturPinPage() {
             }}
             aria-invalid={galatUlang !== null}
             aria-describedby={galatUlang ? "galat-pin-ulang" : undefined}
-            className={`mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3 text-lg tracking-widest text-white placeholder-zinc-400 disabled:opacity-50 ${CINCIN_FOKUS}`}
+            className={`mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3 text-lg tracking-widest text-white placeholder-zinc-400 disabled:bg-[#27272a] disabled:text-[#a1a1aa] disabled:placeholder-zinc-500 ${CINCIN_FOKUS}`}
           />
           {galatUlang && (
             <p id="galat-pin-ulang" role="alert" className="mt-2 text-sm text-red-400">
@@ -322,13 +322,14 @@ export default function AturPinPage() {
           )}
         </div>
 
-        <button
+        <Button
           type="submit"
-          disabled={menyimpan}
-          className={`mt-6 min-h-[48px] w-full rounded-xl bg-white px-4 py-3 text-base font-semibold text-black disabled:opacity-50 ${CINCIN_FOKUS}`}
+          loading={menyimpan}
+          fullWidth
+          className={`mt-6 ${CINCIN_FOKUS}`}
         >
-          {menyimpan ? "Menyimpan…" : pinDiatur ? "Ubah PIN" : "Atur PIN"}
-        </button>
+          {pinDiatur ? "Ubah PIN" : "Atur PIN"}
+        </Button>
       </form>
 
       {pinDiatur && (
@@ -343,31 +344,31 @@ export default function AturPinPage() {
             PIN akan dihapus. Aplikasi tidak lagi meminta PIN saat dibuka.
           </p>
           {!tampilKonfirmasi ? (
-            <button
-              type="button"
+            <Button
+              variant="secondary"
               onClick={() => setTampilKonfirmasi(true)}
-              className={`mt-4 min-h-[48px] rounded-xl border border-zinc-500 bg-transparent px-4 py-3 text-sm font-semibold text-white ${CINCIN_FOKUS}`}
+              className={`mt-4 ${CINCIN_FOKUS}`}
             >
               Hapus PIN
-            </button>
+            </Button>
           ) : (
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <button
-                type="button"
+              <Button
+                variant="danger"
                 onClick={() => void hapusPin()}
-                disabled={menghapus}
-                className={`min-h-[48px] flex-1 rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50 ${CINCIN_FOKUS}`}
+                loading={menghapus}
+                className={`flex-1 ${CINCIN_FOKUS}`}
               >
-                {menghapus ? "Menghapus…" : "Ya, hapus"}
-              </button>
-              <button
-                type="button"
+                Ya, hapus
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={() => setTampilKonfirmasi(false)}
                 disabled={menghapus}
-                className={`min-h-[48px] flex-1 rounded-xl border border-zinc-500 bg-transparent px-4 py-3 text-sm font-semibold text-white disabled:opacity-50 ${CINCIN_FOKUS}`}
+                className={`flex-1 ${CINCIN_FOKUS}`}
               >
                 Batal
-              </button>
+              </Button>
             </div>
           )}
         </section>
@@ -381,6 +382,6 @@ export default function AturPinPage() {
           Kembali ke Pengaturan
         </Link>
       </p>
-    </main>
+    </div>
   );
 }

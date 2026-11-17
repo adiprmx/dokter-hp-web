@@ -341,3 +341,151 @@ npm --prefix apps/api install -D vitest
   @playwright/test tertunda (npm install sangat lambat, instalasi
   paralel tim lain masih berjalan); logika smoke test terverifikasi
   10/10 kasus lewat Node.
+
+### 18 November 2026 — matriks kasus uji Wave 3b (Bagian 11)
+
+- 43 kasus uji baru (T-01 s.d. T-43) untuk area yang belum diliput
+  matriks Bagian 3: cache AI, fallback aturan, retry + kuota
+  Gemini, rate limit, paginasi cursor, auth lintas-situs, PIN,
+  dan speedtest.
+- Kasus ditulis mengikuti keputusan koordinator yang kanonis
+  (K-06, K-23, K-32, K-37, K-42, K-49, K-50, dan lain-lain);
+  bagian kontrak API yang belum diperbarui tim integrasi dicatat
+  di Bagian 11 sebagai item konfirmasi, bukan diikuti mentah.
+
+---
+
+## 11. Matriks kasus uji Wave 3b (kasus baru)
+
+Kasus uji terperinci untuk area yang belum diliput matriks
+Bagian 3. Setiap baris: ID, area, skenario, langkah singkat,
+hasil yang diharapkan, prioritas (P0 = wajib lolos sebelum rilis,
+P1 = penting, P2 = pelengkap), dan jenis (unit / integrasi / E2E).
+
+**Acuan kanonis.** Bila kontrak API (`docs/api-contracts.md`)
+dan keputusan koordinator (`hidden_files/keputusan-koordinator.md`)
+berbeda, kasus di bawah mengikuti keputusan koordinator, karena
+kontrak belum diperbarui tim integrasi pada saat dokumen ini
+ditulis. Perbedaan yang berdampak pada kasus dicatat di akhir
+bagian ini sebagai item "perlu konfirmasi koordinator".
+
+**Catatan penomoran keputusan.** Log keputusan yang dibaca saat
+dokumen ini ditulis berakhir di K-55; K-56 s.d. K-58 tidak
+ditemukan di file tersebut.
+
+### 11.1 Cache AI (K-06, `apps/api/src/ai/cache.ts`, migrasi 0002)
+
+| ID | Area | Skenario | Langkah singkat | Hasil yang diharapkan | Prioritas | Jenis |
+|---|---|---|---|---|---|---|
+| T-01 | Cache AI | Cache hit: pertanyaan sama dijawab dari cache | Kirim pertanyaan yang sama dua kali (konteks pemeriksaan sama); Gemini di-mock dan jumlah panggilannya dihitung | Panggilan kedua mengembalikan 200 dengan `sumber_jawaban: 'cache'`, jawaban sama dengan panggilan pertama, Gemini hanya dipanggil sekali | P0 | Integrasi |
+| T-02 | Cache AI | Cache miss: pertanyaan baru memanggil Gemini dan menyimpan cache | Kirim pertanyaan yang belum pernah diajukan; Gemini di-mock mengembalikan jawaban | Gemini dipanggil sekali; respons 200 `sumber_jawaban: 'ai'`; baris baru muncul di tabel `ai_cache` untuk kunci pertanyaan itu | P0 | Integrasi |
+| T-03 | Cache AI | TTL 7 hari: entri kedaluwarsa tidak dipakai | Sisipkan entri `ai_cache` dengan `dibuat_pada` lebih dari 7 hari lalu, lalu kirim pertanyaan yang sama | Entri lama diabaikan (cache miss); Gemini dipanggil ulang; entri lama ditimpa jawaban baru | P0 | Unit |
+| T-04 | Cache AI | Normalisasi pertanyaan pada kunci cache | Hitung kunci cache untuk "WiFi   LEMOT?" dan "wifi lemot?" | Kedua pertanyaan menghasilkan kunci hash yang sama (spasi dipangkas/dirapatkan, huruf dikecilkan) | P1 | Unit |
+| T-05 | Cache AI | Sidik pemeriksaan pada kunci cache | Kirim pertanyaan yang sama sebelum dan sesudah pemeriksaan baru tersimpan (skor/tanggal berubah) | Kunci cache berubah setelah pemeriksaan baru; pertanyaan kedua adalah cache miss dan dihitung ulang | P1 | Integrasi |
+| T-06 | Cache AI | Kunci cache per pengguna | Pengguna A bertanya, lalu pengguna B mengajukan pertanyaan yang sama dengan konteks yang sama | Kunci cache A dan B berbeda; jawaban tersimpan A tidak pernah dipakai untuk B (B tetap memanggil Gemini) | P0 | Integrasi |
+| T-07 | Cache AI | Best-effort: gagal tulis cache tidak menggagalkan request | Buat D1 gagal pada tulis `ai_cache` (mock menolak), lalu kirim pertanyaan baru | Respons tetap 200 dengan jawaban Gemini; tidak ada galat 500; kegagalan tulis tidak terlihat pengguna | P1 | Integrasi |
+| T-08 | Cache AI | Best-effort: gagal baca cache dilanjutkan ke Gemini | Buat D1 gagal pada baca `ai_cache` (mock menolak), lalu kirim pertanyaan yang sudah tersimpan | Alur berlanjut ke Gemini (diperlakukan sebagai cache miss); respons tetap 200 | P1 | Integrasi |
+
+### 11.2 Fallback berbasis aturan (K-06, K-23, `apps/api/src/ai/fallback.ts`)
+
+| ID | Area | Skenario | Langkah singkat | Hasil yang diharapkan | Prioritas | Jenis |
+|---|---|---|---|---|---|---|
+| T-09 | Fallback aturan | Gemini mati/timeout: jawaban aturan tetap 200 | Buat Gemini di-mock gagal (galat jaringan) lalu timeout (30 detik), masing-masing satu kali; kirim pertanyaan | Kedua kasus mengembalikan 200 dengan `sumber_jawaban: 'aturan'`, jawaban diawali pesan jujur "bukan dari AI", `tersimpan: false`; tidak ada 502 `AI_TIDAK_TERSEDIA` | P0 | Integrasi |
+| T-10 | Fallback aturan | WiFi di bawah 50 KB/detik: saran periksa router | Susun jawaban aturan untuk pertanyaan WiFi dengan konteks kecepatan unduh 30 KB/detik | Jawaban memuat saran memeriksa mode router (pita 2,4 GHz atau 5 GHz) dan channel (1, 6, atau 11 untuk 2,4 GHz) | P1 | Unit |
+| T-11 | Fallback aturan | Skor di bawah 50: arahan langkah per kategori | Susun jawaban aturan dengan konteks skor terakhir 42 | Jawaban memuat arahan bahwa beberapa kategori perlu perhatian dan pengguna diminta memulai dari kategori yang paling rendah | P1 | Unit |
+| T-12 | Fallback aturan | Tanpa data pemeriksaan: pesan jujur + langkah umum | Susun jawaban aturan tanpa konteks pemeriksaan sama sekali | Jawaban menyatakan data pemeriksaan belum tersedia, memberi langkah umum, dan menyarankan menjalankan pemeriksaan dulu | P1 | Unit |
+| T-13 | Fallback aturan | Fallback tidak mengarang angka | Susun jawaban aturan dengan konteks sebagian (hanya skor, tanpa data WiFi) dan tanpa konteks | Jawaban hanya menyebut angka yang memang ada di konteks; tidak ada angka kecepatan, latensi, atau sinyal yang dikarang | P0 | Unit |
+
+### 11.3 Retry + kuota Gemini (K-06, `apps/api/src/ai/gemini.ts`)
+
+| ID | Area | Skenario | Langkah singkat | Hasil yang diharapkan | Prioritas | Jenis |
+|---|---|---|---|---|---|---|
+| T-14 | Retry Gemini | 429 di model primer: satu retry ke model cadangan | Mock fetch: model `gemini-3.5-flash-lite` menjawab 429, model `gemini-3.1-flash-lite` menjawab sukses | Jawaban dari model cadangan dipakai; total tepat 2 panggilan (satu per model); tidak ada retry ketiga | P0 | Unit |
+| T-15 | Retry Gemini | 429 di kedua model: fallback aturan + kode tercatat | Mock fetch: kedua model menjawab 429; kirim pertanyaan lewat endpoint | Respons 200 `sumber_jawaban: 'aturan'`; kode internal `GEMINI_KUOTA_HABIS` tercatat — perlu konfirmasi koordinator: belum ditemukan mekanisme pencatatan log server untuk kode ini di `routes.ts` | P0 | Integrasi |
+| T-16 | Retry Gemini | 404 di model primer: retry ke model cadangan | Mock fetch: model primer menjawab 404, model cadangan menjawab sukses | Jawaban dari model cadangan dipakai; total tepat 2 panggilan | P1 | Unit |
+| T-17 | Retry Gemini | Galat non-429/404: tanpa retry cadangan | Mock fetch: model primer timeout, lalu 500, masing-masing satu kali | Model cadangan tidak dipanggil; alur langsung ke fallback aturan (200, `sumber_jawaban: 'aturan'`) | P1 | Unit |
+| T-18 | Kuota AI | `sisa_hari_ini` menurun per pertanyaan tersimpan | Kirim 3 pertanyaan (AI dan cache) lalu 1 pertanyaan saat Gemini mati | Setiap pertanyaan tersimpan mengurangi `sisa_hari_ini` satu per satu; pertanyaan fallback (`tersimpan: false`) tidak memotong sisa kuota | P0 | Integrasi |
+
+### 11.4 Rate limit (K-02, K-42, kontrak §0.7 dan §6.6)
+
+| ID | Area | Skenario | Langkah singkat | Hasil yang diharapkan | Prioritas | Jenis |
+|---|---|---|---|---|---|---|
+| T-19 | Rate limit | Ekspor 5/hari: upaya ke-6 ditolak | Panggil `GET /api/account/export` 6 kali berturut-turut sebagai satu pengguna | 5 panggilan pertama 200; panggilan ke-6 mengembalikan 429 `RATE_LIMITED` (K-59) | P0 | Integrasi |
+| T-20 | Rate limit | Auth Google 10/menit per IP | Panggil `GET /api/auth/google` 11 kali dari satu IP dalam satu menit | 10 panggilan pertama dilayani; panggilan ke-11 mengembalikan 429 | P1 | Integrasi |
+| T-21 | Rate limit | Callback dihitung gabungan dengan Google | Panggil `GET /api/auth/google` 6 kali lalu `GET /api/auth/google/callback` 5 kali dari satu IP dalam satu menit (kontrak §1.2: dihitung gabungan per IP) | Total gabungan 10 diizinkan; panggilan gabungan ke-11 mengembalikan 429 | P1 | Integrasi |
+| T-22 | Rate limit | Tulis 60/menit per pengguna | Kirim 61 permintaan tulis (misalnya `POST /api/health-checks`) sebagai satu pengguna dalam satu menit | 60 permintaan pertama dilayani; permintaan ke-61 mengembalikan 429 `RATE_LIMITED` | P0 | Integrasi |
+| T-23 | Rate limit | Batas terpisah per pengguna | Pengguna A menghabiskan batas ekspor/tulis hariannya, lalu pengguna B memanggil endpoint yang sama | Batas A tidak memengaruhi B; B tetap mendapat jatah penuhnya | P1 | Integrasi |
+
+### 11.5 Paginasi cursor (K-32, K-38, `apps/api/src/lib/db.ts`)
+
+| ID | Area | Skenario | Langkah singkat | Hasil yang diharapkan | Prioritas | Jenis |
+|---|---|---|---|---|---|---|
+| T-24 | Paginasi cursor | Halaman 1 + 2 tanpa duplikat atau hilang | Buat 25 health check; ambil halaman 1 (`limit=20`) lalu halaman 2 dengan `cursor` dari respons | Gabungan kedua halaman memuat tepat 25 baris unik, urutan terbaru dulu, tanpa duplikat dan tanpa baris hilang | P0 | Integrasi |
+| T-25 | Paginasi cursor | Cursor tidak valid ditolak 400 | Panggil `GET /api/health-checks?cursor=bukan-cursor-valid` | Respons 400 `VALIDATION_ERROR`; tidak ada 500 dan tidak ada data yang dikembalikan | P0 | Integrasi |
+| T-26 | Paginasi cursor | Konsisten di health, WiFi, history, dan AI | Panggil `GET /api/health-checks`, `GET /api/wifi-reports`, `GET /api/history`, dan `GET /api/ai/diagnoses` masing-masing dua halaman | Keempat endpoint memakai cursor keyset yang sama (`limit` + `cursor` + `next_cursor`); parameter `offset` tidak lagi dipakai di endpoint mana pun — perlu konfirmasi koordinator: catatan verifikasi koordinator menyebut selisih offset vs cursor antar rute belum diselesaikan | P0 | Integrasi |
+| T-27 | Paginasi cursor | Batas `limit` diklem ke 1–100 | Panggil daftar dengan `limit=0`, `limit=500`, dan `limit=bukan-angka` | `limit=0` diklem ke 1, `limit=500` diklem ke 100, `limit` bukan angka mengembalikan 400 — perlu konfirmasi koordinator: perilaku klem ini tertulis di kontrak §0.6 untuk paginasi offset; bentuk cursor-nya belum didokumentasikan | P2 | Integrasi |
+| T-28 | Paginasi cursor | Halaman terakhir menandakan habis | Ambil halaman sampai data habis (kurang dari `limit` baris tersisa) | Halaman terakhir mengembalikan `next_cursor: null` dan penanda tidak ada lagi halaman — perlu konfirmasi koordinator: bentuk field meta cursor (`next_cursor`, `has_more`, `total`) belum didokumentasikan di kontrak §0.6 yang masih memakai bentuk offset | P1 | Integrasi |
+
+### 11.6 Auth lintas-situs (K-49, K-50, kontrak §1.2)
+
+| ID | Area | Skenario | Langkah singkat | Hasil yang diharapkan | Prioritas | Jenis |
+|---|---|---|---|---|---|---|
+| T-29 | Auth lintas-situs | Cookie sesi memakai `SameSite=None; Secure` | Periksa header `Set-Cookie` sesi pada respons callback Google | Cookie `dokter_hp_session` membawa atribut `HttpOnly; Secure; SameSite=None; Path=/` (bukan `Lax`, agar terkirim pada fetch lintas-situs) | P0 | Integrasi |
+| T-30 | Auth lintas-situs | Cookie sesi terkirim pada fetch lintas-situs | Dari origin frontend (Pages), panggil `GET /api/auth/me` dengan `credentials: 'include'` setelah masuk | Permintaan membawa cookie sesi dan mengembalikan 200 dengan data pengguna (bukan 401) | P0 | E2E |
+| T-31 | Auth lintas-situs | Origin salah pada endpoint mutasi ditolak 403 | Kirim `POST /api/health-checks` dengan header `Origin` dari domain yang bukan `ALLOWED_ORIGIN` | Respons 403; data tidak tersimpan | P0 | Integrasi |
+| T-32 | Auth lintas-situs | Tanpa header Origin (klien non-browser) diizinkan | Kirim `POST /api/health-checks` tanpa header `Origin` (seperti curl atau klien non-browser) dengan sesi valid | Permintaan dilayani normal (200); tidak ada penolakan karena Origin tidak ada | P0 | Integrasi |
+| T-33 | Auth lintas-situs | Callback menghapus cookie OAuth di semua jalur | Jalankan callback pada jalur sukses dan jalur galat (`access_denied`, `state` tidak cocok, `code` hilang) | Setiap respons menyertakan penghapusan cookie OAuth (`state`, `verifier`, `redirect`) dengan `Max-Age=0` — perlu konfirmasi koordinator: kontrak §1.2 hanya menampilkan penghapusan `state` + `verifier` pada jalur sukses; cookie `redirect` dan jalur galat belum didokumentasikan | P1 | Integrasi |
+
+### 11.7 PIN (K-05, K-47, kontrak §2.2)
+
+| ID | Area | Skenario | Langkah singkat | Hasil yang diharapkan | Prioritas | Jenis |
+|---|---|---|---|---|---|---|
+| T-34 | PIN | 5x salah: terkunci 30 detik | Atur PIN, lalu masukkan PIN salah 5 kali berturut-turut; coba lagi sekali saat terkunci | Percobaan ke-1 s.d. ke-4 mengembalikan 401 `PIN_SALAH` dengan `sisa_percobaan` menurun; percobaan ke-5 mengembalikan 403 `PIN_TERKUNCI` dengan `details.sisa_detik` (±30) dan `terkunci_sampai`; percobaan selama kunci tetap 403 `PIN_TERKUNCI` | P0 | Integrasi |
+| T-35 | PIN | Format salah tidak dihitung sebagai percobaan | Masukkan PIN berformat salah ("12ab", "123", kosong) 3 kali, lalu PIN salah yang valid formatnya sekali | Format salah mengembalikan 400 `VALIDATION_ERROR` dan penghitung tidak bertambah; PIN salah berikutnya mengembalikan 401 `PIN_SALAH` dengan `sisa_percobaan: 4` | P0 | Integrasi |
+| T-36 | PIN | PIN belum diatur: 409 `CONFLICT` | Pada akun tanpa PIN, panggil `POST /api/auth/pin/verify` lalu `POST /api/auth/pin/delete` | Kedua panggilan mengembalikan 409 `CONFLICT` (K-47; kode `PIN_BELUM_DIATUR` dibatalkan) | P0 | Integrasi |
+| T-37 | PIN | Sesi terkunci: endpoint non-PIN 403 `SESSION_LOCKED` | Kunci sesi dengan PIN, lalu panggil `GET /api/health-checks` dan `POST /api/ai/diagnose` | Kedua panggilan mengembalikan 403 `SESSION_LOCKED`; tidak ada data yang dibaca atau ditulis | P0 | Integrasi |
+| T-38 | PIN | Endpoint yang diizinkan K-05 tetap jalan saat terkunci | Saat sesi terkunci, panggil `GET /api/auth/me`, `POST /api/auth/pin/verify`, dan `POST /api/auth/logout` | Ketiga endpoint merespons normal (bukan `SESSION_LOCKED`); PIN set/delete juga tetap dapat dipanggil | P0 | Integrasi |
+| T-39 | PIN | Kunci kedaluwarsa: PIN benar membuka sesi lagi | Setelah kunci 30 detik habis (waktu dikendalikan di tes), masukkan PIN yang benar | PIN benar mengembalikan 200, sesi tidak terkunci lagi, dan penghitung percobaan salah direset ke 0 | P1 | Integrasi |
+
+### 11.8 Speedtest (K-27, PRODUCT.md §4.4, `apps/web/src/lib/speedtest.ts`)
+
+| ID | Area | Skenario | Langkah singkat | Hasil yang diharapkan | Prioritas | Jenis |
+|---|---|---|---|---|---|---|
+| T-40 | Speedtest | File tes tidak di-cache service worker | Unduh `/speedtest-1mb.bin` dua kali berturut-turut di browser dengan service worker aktif | Kedua unduhan berasal dari jaringan (aturan network-only `sw.js` cocok dengan jalur kanonis K-27); file tidak ditemukan di Cache Storage | P0 | E2E |
+| T-41 | Speedtest | Timeout 15 detik | Mock unduhan yang tidak pernah selesai (atau server lambat) lalu jalankan tes kecepatan | Tes berhenti pada 15 detik (`TIMEOUT_TES_MS = 15000`) dengan galat timeout; tes tidak menggantung tanpa batas | P1 | Unit |
+| T-42 | Speedtest | Latensi diukur lewat HTTP, bukan ICMP | Periksa implementasi pengukuran latensi dan jalankan pengukuran | Latensi diukur dari permintaan HTTP `GET /api/ping` (median 3 sampel); tidak ada upaya ICMP (browser tidak dapat mengirim ICMP); label UI "latensi HTTP" | P1 | Unit |
+| T-43 | Speedtest | File tes berukuran 1 MB di jalur kanonis | Panggil `GET /speedtest-1mb.bin` di root (K-27) dan periksa ukuran respons | Respons 200 dengan ukuran tepat 1 MB (1.048.576 byte), sehingga perhitungan kecepatan valid; jalur lama `/speedtest/1mb.bin` tidak dipakai lagi | P1 | Integrasi |
+
+### 11.9 Item yang perlu konfirmasi koordinator
+
+Dikumpulkan dari baris-baris di atas. Tidak ada endpoint atau kode
+yang dikarang untuk menutup celah ini.
+
+1. **Kode galat rate limit ekspor (T-19):** K-42 menetapkan 429
+   `RATE_LIMIT_EXCEEDED`, tetapi kontrak §6.6 masih menulis 429
+   `RATE_LIMITED`. Mana yang kanonis?
+2. **Pencatatan kode `GEMINI_KUOTA_HABIS` (T-15):** kode internal
+   ini ada di `GalatGemini`, tetapi belum ditemukan mekanisme
+   pencatatan log server untuknya di `routes.ts`. Apakah kode
+   cukup dilacak di lapisan Gemini, atau perlu log server eksplisit?
+3. **Penyelarasan cursor per rute (T-26):** catatan verifikasi
+   koordinator menyebut selisih offset vs cursor antar rute belum
+   diselesaikan. Konfirmasi bahwa semua endpoint daftar sudah
+   memakai cursor sebelum T-26 dijalankan.
+4. **Bentuk meta paginasi cursor (T-27, T-28):** kontrak §0.6
+   masih memakai bentuk offset (`total`, `has_more`, klem `limit`
+   1–100). Bentuk field meta cursor (`next_cursor`, `has_more`,
+   `total`) dan perilaku klem `limit` pada cursor belum
+   didokumentasikan.
+5. **Penghapusan cookie OAuth (T-33):** kontrak §1.2 hanya
+   menampilkan penghapusan cookie `state` + `verifier` pada jalur
+   sukses. Konfirmasi cookie `redirect` dan perilaku penghapusan
+   pada jalur galat.
+6. **Keputusan K-56 s.d. K-58:** log keputusan yang dibaca
+   berakhir di K-55. Bila K-56 s.d. K-58 sudah ada, sampaikan
+   isinya agar matriks dapat ditambah bila relevan.
+7. **Kontrak §5 belum diperbarui:** §5 masih menulis 502
+   `AI_TIDAK_TERSEDIA`, batas pertanyaan 2000 karakter, paginasi
+   offset, dan path tanpa awalan `/api` — semuanya sudah dibatalkan
+   K-23, K-36, K-37, K-32, dan K-07. Kasus di bagian ini mengikuti
+   keputusan; kontrak menunggu pembaruan tim integrasi.

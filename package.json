@@ -19,5 +19,8 @@
   "version": "0.1.0",
   "workspaces": [
     "apps/*"
-  ]
+  ],
+  "devDependencies": {
+    "@playwright/test": "^1.65.1"
+  }
 }

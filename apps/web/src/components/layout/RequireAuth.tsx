@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
+import { ApiError, fetchJson } from "../../lib/api";
 
 // Gerbang rute yang wajib masuk (Tim Shell/Routing).
 //
@@ -97,41 +98,28 @@ export function putuskanArahAuth(
 
 type StatusPemeriksaan = "memeriksa" | StatusSesi | "galat-jaringan";
 
-interface MeResponse {
-  success?: boolean;
-  data?: { sesi_terkunci?: boolean };
-  error?: { code?: string; message?: string };
-}
-
-// Variabel lingkungan yang sama dengan lib/api.ts: kosong berarti jalur
-// relatif /api (proxy Vite saat dev, route Pages saat produksi).
-const API_URL = import.meta.env.VITE_API_URL as string | undefined;
-
-/** Satu panggilan GET /api/auth/me dengan timeout 10 detik. */
+/**
+ * Satu panggilan GET /api/auth/me dengan timeout 10 detik, lewat
+ * lib/api.ts (credentials: "include" + ApiError bertipe, K-16).
+ * 401 berarti tidak masuk; 403 SESSION_LOCKED berarti terkunci;
+ * galat lain (termasuk timeout) dianggap galat jaringan.
+ */
 async function periksaSesi(): Promise<StatusSesi | "galat-jaringan"> {
-  const base = (API_URL ?? "").replace(/\/$/, "");
   const pengendali = new AbortController();
   const batasWaktu = window.setTimeout(() => pengendali.abort(), 10_000);
   try {
-    const res = await fetch(`${base}/api/auth/me`, {
-      credentials: "include",
-      signal: pengendali.signal,
-    });
-    if (res.status === 401) return "tidak-masuk";
-    let body: MeResponse | null = null;
-    try {
-      body = (await res.json()) as MeResponse;
-    } catch {
-      body = null;
+    const envelope = await fetchJson<{ sesi_terkunci?: boolean }>(
+      "/api/auth/me",
+      { signal: pengendali.signal },
+    );
+    return envelope.data.sesi_terkunci === true ? "terkunci" : "terbuka";
+  } catch (galat) {
+    if (galat instanceof ApiError) {
+      if (galat.status === 401) return "tidak-masuk";
+      if (galat.status === 403 && galat.code === "SESSION_LOCKED") {
+        return "terkunci";
+      }
     }
-    if (res.status === 403 && body?.error?.code === "SESSION_LOCKED") {
-      return "terkunci";
-    }
-    if (!res.ok || body?.success !== true || !body.data) {
-      return "galat-jaringan";
-    }
-    return body.data.sesi_terkunci === true ? "terkunci" : "terbuka";
-  } catch {
     return "galat-jaringan";
   } finally {
     window.clearTimeout(batasWaktu);

@@ -1,8 +1,8 @@
 // components/charts/ScoreRing.tsx — Cincin skor kesehatan 0-100 (SVG murni).
 //
-// Dipakai di dashboard untuk skor terbaru. Geometri sama dengan cincin di
-// components/ui/ScoreRing.tsx (viewBox 120, radius 52) agar tampilannya
-// konsisten; klasifikasi dan warna diambil dari lib/skor.ts (satu sumber).
+// Dipakai di dashboard untuk skor terbaru. Geometri cincin:
+// viewBox 120, radius 52; klasifikasi dan warna diambil dari
+// lib/skor.ts (satu sumber).
 //
 // Aksesibilitas (a11y.md 6.4): SVG cincin disembunyikan dari pembaca layar
 // (aria-hidden); angka dan kategori dibaca sebagai teks biasa, dan kategori

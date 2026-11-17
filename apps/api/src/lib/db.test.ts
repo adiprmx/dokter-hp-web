@@ -1,18 +1,17 @@
 // apps/api/src/lib/db.test.ts
-// Unit test helper D1 + paginasi offset/cursor.
+// Unit test helper D1 + paginasi cursor (K-32).
 
 import { describe, expect, it } from 'vitest';
 import {
-  buatPaginationMeta,
   cursorClause,
   decodeCursor,
   encodeCursor,
   newId,
   nowIso,
   paginateRows,
+  parseCursorParam,
   parseLimit,
   parseLimitParam,
-  parseOffsetParam,
   queryAll,
   queryOne,
   runQuery,
@@ -50,7 +49,7 @@ describe('parseLimit (longgar)', () => {
   });
 });
 
-describe('parseLimitParam / parseOffsetParam (ketat, kontrak 0.6)', () => {
+describe('parseLimitParam / parseCursorParam (ketat, kontrak 0.6)', () => {
   it('limit: default 20, diklem ke 1-100, bukan angka ditolak', () => {
     expect(parseLimitParam(undefined)).toEqual({ ok: true, value: 20 });
     expect(parseLimitParam('5')).toEqual({ ok: true, value: 5 });
@@ -61,36 +60,13 @@ describe('parseLimitParam / parseOffsetParam (ketat, kontrak 0.6)', () => {
     expect(parseLimitParam('10.5').ok).toBe(false);
   });
 
-  it('offset: default 0, negatif atau bukan angka ditolak', () => {
-    expect(parseOffsetParam(undefined)).toEqual({ ok: true, value: 0 });
-    expect(parseOffsetParam('0')).toEqual({ ok: true, value: 0 });
-    expect(parseOffsetParam('40')).toEqual({ ok: true, value: 40 });
-    expect(parseOffsetParam('-1').ok).toBe(false);
-    expect(parseOffsetParam('abc').ok).toBe(false);
-    expect(parseOffsetParam('').ok).toBe(false);
-  });
-});
-
-describe('buatPaginationMeta', () => {
-  it('menghitung has_more dari limit + offset vs total', () => {
-    expect(buatPaginationMeta(20, 0, 57)).toEqual({
-      limit: 20,
-      offset: 0,
-      total: 57,
-      has_more: true,
-    });
-    expect(buatPaginationMeta(20, 40, 57)).toEqual({
-      limit: 20,
-      offset: 40,
-      total: 57,
-      has_more: false,
-    });
-    expect(buatPaginationMeta(20, 0, 20)).toEqual({
-      limit: 20,
-      offset: 0,
-      total: 20,
-      has_more: false,
-    });
+  it('cursor: tidak ada berarti halaman pertama, cursor cacat ditolak', () => {
+    expect(parseCursorParam(undefined)).toEqual({ ok: true, value: null });
+    expect(parseCursorParam('')).toEqual({ ok: true, value: null });
+    const cursor = { dibuat_pada: '2026-11-17T10:00:00.000Z', id: 'abc-123' };
+    expect(parseCursorParam(encodeCursor(cursor))).toEqual({ ok: true, value: cursor });
+    expect(parseCursorParam('bukan-base64!!!').ok).toBe(false);
+    expect(parseCursorParam(encodeCursor({ dibuat_pada: '', id: 'x' })).ok).toBe(false);
   });
 });
 
@@ -191,10 +167,9 @@ describe('queryAll / queryOne / runQuery (dengan FakeD1)', () => {
     expect(tidakAda).toBeNull();
     const semua = await queryAll(
       db,
-      'SELECT id FROM health_checks WHERE user_id = ? AND deleted_at IS NULL ORDER BY dibuat_pada DESC, id DESC LIMIT ? OFFSET ?',
+      'SELECT id FROM health_checks WHERE user_id = ? AND deleted_at IS NULL ORDER BY dibuat_pada DESC, id DESC LIMIT ?',
       'user-1',
       10,
-      0,
     );
     expect(semua).toHaveLength(1);
     const hapus = await runQuery(
@@ -214,7 +189,7 @@ describe('queryAll / queryOne / runQuery (dengan FakeD1)', () => {
     expect(setelah).toHaveLength(0);
   });
 
-  it('LIMIT + OFFSET memotong dengan benar', async () => {
+  it('cursor keyset memotong halaman dengan benar (tanpa OFFSET)', async () => {
     const db = new FakeD1({
       health_checks: Array.from({ length: 5 }, (_, i) => ({
         id: `id-${i}`,
@@ -227,13 +202,24 @@ describe('queryAll / queryOne / runQuery (dengan FakeD1)', () => {
         sync_status: 'synced',
       })),
     });
-    const halaman = await queryAll<{ id: string }>(
+    const halaman1 = await queryAll<{ id: string; dibuat_pada: string }>(
       db,
-      'SELECT id FROM health_checks WHERE user_id = ? ORDER BY dibuat_pada DESC, id DESC LIMIT ? OFFSET ?',
+      'SELECT id, dibuat_pada FROM health_checks WHERE user_id = ? ORDER BY dibuat_pada DESC, id DESC LIMIT ?',
       'user-1',
-      2,
-      2,
+      3,
     );
-    expect(halaman.map((r) => r.id)).toEqual(['id-2', 'id-1']);
+    expect(halaman1.map((r) => r.id)).toEqual(['id-4', 'id-3', 'id-2']);
+    const klausul = cursorClause({
+      dibuat_pada: halaman1[2]?.dibuat_pada as string,
+      id: halaman1[2]?.id as string,
+    });
+    const halaman2 = await queryAll<{ id: string }>(
+      db,
+      `SELECT id, dibuat_pada FROM health_checks WHERE user_id = ? ${klausul.sql} ORDER BY dibuat_pada DESC, id DESC LIMIT ?`,
+      'user-1',
+      ...klausul.params,
+      3,
+    );
+    expect(halaman2.map((r) => r.id)).toEqual(['id-1', 'id-0']);
   });
 });

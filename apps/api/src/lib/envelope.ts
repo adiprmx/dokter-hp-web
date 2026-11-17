@@ -19,18 +19,22 @@ export class ApiError extends Error {
   status: number;
   code: string;
   details?: Record<string, unknown>;
+  /** Detik sampai batas laju berakhir; bila diisi, respons menyertakan header Retry-After. */
+  retryAfterDetik?: number;
 
   constructor(
     status: number,
     code: string,
     message: string,
     details?: Record<string, unknown>,
+    retryAfterDetik?: number,
   ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.details = details;
+    this.retryAfterDetik = retryAfterDetik;
   }
 }
 
@@ -75,13 +79,19 @@ export function konfirmasiSalah(): ApiError {
   return new ApiError(
     422,
     'KONFIRMASI_SALAH',
-    'Teks konfirmasi tidak cocok. Ketik HAPUS untuk melanjutkan.',
+    'Teks konfirmasi tidak cocok. Ketik HAPUS atau DELETE untuk melanjutkan.',
   );
 }
 
-/** Galat 429 — terlalu banyak permintaan. */
-export function terlaluSering(): ApiError {
-  return new ApiError(429, 'RATE_LIMITED', 'Terlalu sering, coba lagi sebentar.');
+/** Galat 429 — terlalu banyak permintaan (kode kanonis K-59: RATE_LIMITED). */
+export function terlaluSering(retryAfterDetik?: number): ApiError {
+  return new ApiError(
+    429,
+    'RATE_LIMITED',
+    'Terlalu sering, coba lagi sebentar.',
+    undefined,
+    retryAfterDetik,
+  );
 }
 
 export interface SuksesBody<T> {
@@ -140,9 +150,14 @@ export function balasSukses<T>(
  */
 export function balasGagal(c: Context, err: unknown): Response {
   if (err instanceof ApiError) {
+    const header: Record<string, string> = {};
+    if (err.retryAfterDetik !== undefined) {
+      header['Retry-After'] = String(err.retryAfterDetik);
+    }
     return c.json(
       gagal(err.code, err.message, err.details),
       err.status as ContentfulStatusCode,
+      header,
     );
   }
   return c.json(

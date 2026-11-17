@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchJson } from "../lib/api";
+import { ApiError, fetchJson, panggilApi } from "../lib/api";
+import { Button } from "../components/ui/Button";
 import {
   URUTAN_KOMPONEN,
   formatKecepatan,
   formatSumber,
   formatTanggalWaktu,
-  gabungRiwayat,
   generatePdf,
   kategoriSkor,
   klasifikasiKecepatan,
@@ -21,16 +21,18 @@ import {
 
 // Halaman Riwayat — rute /riwayat (wajib masuk; pengait rute di App.tsx
 // menjadi tanggung jawab tim integrasi, bersama lazy loading rute).
-// Menggabungkan tiga daftar dari API (pemeriksaan kesehatan, laporan
-// WiFi, diagnosis AI), terbaru dulu, dengan filter per jenis, hapus
-// per entri, dan unduh laporan PDF client-side.
+// Mengambil riwayat gabungan dari satu endpoint GET /api/history
+// (K-33, kontrak §7): pemeriksaan kesehatan, laporan WiFi, dan
+// diagnosis AI sudah digabung + diurutkan terbaru dulu oleh server,
+// dengan filter per jenis, hapus per entri (DELETE /api/history/:jenis/:id
+// untuk ketiga jenis, termasuk AI), dan unduh laporan PDF client-side.
 //
 // Teks layar mengikuti docs/copy.md bagian 11. Desain mengikuti design
 // lock hitam/putih dan token a11y (K-11): teks minimal Zinc 400,
 // border komponen interaktif minimal Zinc 500, target sentuh 48x48 px.
 
-// Jumlah maksimum baris per daftar yang diminta ke API (batas atas
-// kontrak: limit 1-100). Riwayat mengambil halaman pertama tiap jenis;
+// Jumlah maksimum entri yang diminta ke API (batas atas kontrak:
+// limit 1-100). Halaman mengambil 100 entri terbaru gabungan;
 // bila masih ada entri lama di luar itu, halaman menampilkan catatan.
 const BATAS_DAFTAR = 100;
 
@@ -45,24 +47,6 @@ const LABEL_FILTER: Record<Filter, string> = {
 
 const DAFTAR_FILTER: Filter[] = ["semua", "kesehatan", "wifi", "ai"];
 
-interface DaftarResponse<T> {
-  success: boolean;
-  data: T[];
-  meta?: {
-    pagination?: {
-      limit: number;
-      offset: number;
-      total: number;
-      has_more: boolean;
-    };
-  };
-}
-
-interface MeResponse {
-  success: boolean;
-  data: { id: string; nama: string; email: string };
-}
-
 type StatusMuat = "memuat" | "siap" | "galat" | "sesi-habis";
 
 interface Pesan {
@@ -70,56 +54,144 @@ interface Pesan {
   teks: string;
 }
 
-const KELAS_TOMBOL_UTAMA =
-  "inline-flex min-h-[48px] items-center justify-center rounded-lg bg-white px-4 text-sm font-semibold text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-50";
+/** Satu item GET /api/history (kontrak §7): data adalah proyeksi ringkas
+ *  per jenis — id dan dibuat_pada ada di tingkat item, bukan di data. */
+interface ItemRiwayatApi {
+  jenis: "kesehatan" | "wifi" | "ai";
+  id: string;
+  dibuat_pada: string;
+  data: Record<string, unknown>;
+}
 
-const KELAS_TOMBOL_SEKUNDER =
-  "inline-flex min-h-[48px] items-center justify-center rounded-lg border border-zinc-500 px-4 text-sm font-medium text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-50";
+function angkaAtauNull(nilai: unknown): number | null {
+  return typeof nilai === "number" && Number.isFinite(nilai) ? nilai : null;
+}
 
-const KELAS_TOMBOL_BAHAYA =
-  "inline-flex min-h-[48px] items-center justify-center rounded-lg bg-red-600 px-4 text-sm font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white disabled:opacity-50";
+function teksAtauNull(nilai: unknown): string | null {
+  return typeof nilai === "string" ? nilai : null;
+}
 
-async function ambilDaftar<T>(
-  path: string,
-): Promise<{ items: T[]; adaLagi: boolean }> {
-  const res = await fetchJson<DaftarResponse<T>>(
-    `${path}?limit=${BATAS_DAFTAR}&offset=0`,
-    { credentials: "include" },
-  );
-  return {
-    items: Array.isArray(res.data) ? res.data : [],
-    adaLagi: res.meta?.pagination?.has_more === true,
-  };
+/**
+ * Memetakan satu item /api/history ke EntriRiwayat (lib/pdf.ts).
+ * Field yang tidak dibawa proyeksi ringkas (user_id, updated_at,
+ * deleted_at) dibiarkan kosong — tidak pernah ditampilkan di layar
+ * maupun di PDF. Mengembalikan null bila bentuk item tidak valid,
+ * agar satu item rusak tidak menggagalkan seluruh daftar.
+ */
+function petakanItem(item: ItemRiwayatApi): EntriRiwayat | null {
+  if (
+    typeof item !== "object" ||
+    item === null ||
+    typeof item.id !== "string" ||
+    typeof item.dibuat_pada !== "string" ||
+    typeof item.data !== "object" ||
+    item.data === null
+  ) {
+    return null;
+  }
+  const data = item.data;
+  if (item.jenis === "kesehatan") {
+    if (
+      typeof data.skor !== "number" ||
+      typeof data.ringkasan !== "object" ||
+      data.ringkasan === null
+    ) {
+      return null;
+    }
+    const kesehatan: HealthCheck = {
+      id: item.id,
+      skor: data.skor,
+      ringkasan: data.ringkasan as HealthCheck["ringkasan"],
+      dibuat_pada: item.dibuat_pada,
+      // sync_status tidak ditampilkan di layar maupun PDF; nilai
+      // cadangan "pending" hanya memenuhi tipe bila server mengirim
+      // nilai di luar tiga status yang dikenal.
+      sync_status:
+        data.sync_status === "pending" ||
+        data.sync_status === "synced" ||
+        data.sync_status === "failed"
+          ? data.sync_status
+          : "pending",
+    };
+    return {
+      jenis: "kesehatan",
+      id: item.id,
+      dibuatPada: item.dibuat_pada,
+      data: kesehatan,
+    };
+  }
+  if (item.jenis === "wifi") {
+    // Sumber ditampilkan di layar ("Dari tes web" dsb.), jadi nilai
+    // yang tidak dikenal tidak boleh ditebak — entrinya dibuang.
+    if (
+      data.sumber !== "web" &&
+      data.sumber !== "apk" &&
+      data.sumber !== "manual"
+    ) {
+      return null;
+    }
+    const wifi: WifiReport = {
+      id: item.id,
+      ssid: teksAtauNull(data.ssid),
+      kecepatan_koneksi_mbps: angkaAtauNull(data.kecepatan_koneksi_mbps),
+      kekuatan_sinyal:
+        data.kekuatan_sinyal === "lemah" ||
+        data.kekuatan_sinyal === "sedang" ||
+        data.kekuatan_sinyal === "kuat"
+          ? data.kekuatan_sinyal
+          : null,
+      channel: angkaAtauNull(data.channel),
+      dns: teksAtauNull(data.dns),
+      ping_ms: angkaAtauNull(data.ping_ms),
+      rekomendasi: teksAtauNull(data.rekomendasi),
+      kecepatan_unduh_kbps: angkaAtauNull(data.kecepatan_unduh_kbps),
+      sumber: data.sumber,
+      durasi_tes_detik: angkaAtauNull(data.durasi_tes_detik),
+      dibuat_pada: item.dibuat_pada,
+    };
+    return { jenis: "wifi", id: item.id, dibuatPada: item.dibuat_pada, data: wifi };
+  }
+  if (item.jenis === "ai") {
+    if (
+      typeof data.pertanyaan !== "string" ||
+      typeof data.jawaban !== "string"
+    ) {
+      return null;
+    }
+    const ai: AiDiagnosis = {
+      id: item.id,
+      health_check_id: teksAtauNull(data.health_check_id),
+      pertanyaan: data.pertanyaan,
+      jawaban: data.jawaban,
+      dibuat_pada: item.dibuat_pada,
+    };
+    return { jenis: "ai", id: item.id, dibuatPada: item.dibuat_pada, data: ai };
+  }
+  return null;
 }
 
 // Nama pengguna untuk kepala laporan PDF. Gagal dimuat bukan galat
 // fatal: laporan dibuat tanpa baris nama, bukan dengan nama karangan.
 async function ambilNamaPengguna(): Promise<string | null> {
   try {
-    const res = await fetchJson<MeResponse>("/api/auth/me", {
-      credentials: "include",
-    });
-    return typeof res.data?.nama === "string" && res.data.nama.length > 0
-      ? res.data.nama
+    const saya = await panggilApi<{ nama?: string }>("/api/auth/me");
+    return typeof saya.nama === "string" && saya.nama.length > 0
+      ? saya.nama
       : null;
   } catch {
     return null;
   }
 }
 
-// fetchJson melempar Error "Permintaan <path> gagal: <status>" —
-// status 401 berarti sesi sudah berakhir.
+// ApiError 401 berarti sesi sudah berakhir.
 function galatKarenaSesi(err: unknown): boolean {
-  return err instanceof Error && err.message.includes("401");
+  return err instanceof ApiError && err.status === 401;
 }
 
-// Endpoint hapus per jenis entri. Diagnosis AI tidak punya endpoint
-// hapus per entri (docs/api-contracts.md 5.2): riwayat AI hanya
-// terhapus bersama akun, jadi entri AI tidak menampilkan tombol hapus.
-function pathHapus(entri: EntriRiwayat): string | null {
-  if (entri.jenis === "kesehatan") return `/api/health-checks/${entri.id}`;
-  if (entri.jenis === "wifi") return `/api/wifi-reports/${entri.id}`;
-  return null;
+// Endpoint hapus per entri (kontrak §7): DELETE /api/history/:jenis/:id
+// berlaku untuk ketiga jenis, termasuk diagnosis AI.
+function pathHapus(entri: EntriRiwayat): string {
+  return `/api/history/${entri.jenis}/${entri.id}`;
 }
 
 function judulWifi(data: WifiReport): string {
@@ -153,8 +225,6 @@ function EntriItem({
   onBatalHapus,
   onKonfirmasiHapus,
 }: EntriItemProps) {
-  const bisaDihapus = pathHapus(entri) !== null;
-
   return (
     <li className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
       {entri.jenis === "kesehatan" && (
@@ -241,50 +311,46 @@ function EntriItem({
               </p>
             </div>
           </details>
-          <p className="mt-3 text-xs text-zinc-400">
-            Tanya jawab hanya bisa dihapus bersama akun.
-          </p>
         </div>
       )}
 
-      {bisaDihapus &&
-        (konfirmasi ? (
-          <div
-            role="alert"
-            className="mt-4 rounded-lg border border-red-400/40 bg-red-400/10 p-4"
-          >
-            <p className="font-semibold text-zinc-100">Hapus entri ini?</p>
-            <p className="mt-1 text-sm text-zinc-300">
-              Entri ini akan dihapus dari riwayat Anda.
-            </p>
-            <div className="mt-3 flex gap-3">
-              <button
-                type="button"
-                onClick={onKonfirmasiHapus}
-                disabled={menghapus}
-                className={`${KELAS_TOMBOL_BAHAYA} flex-1`}
-              >
-                {menghapus ? "Menghapus…" : "Ya, hapus"}
-              </button>
-              <button
-                type="button"
-                onClick={onBatalHapus}
-                disabled={menghapus}
-                className={`${KELAS_TOMBOL_SEKUNDER} flex-1`}
-              >
-                Batal
-              </button>
-            </div>
+      {konfirmasi ? (
+        <div
+          role="alert"
+          className="mt-4 rounded-lg border border-red-400/40 bg-red-400/10 p-4"
+        >
+          <p className="font-semibold text-zinc-100">Hapus entri ini?</p>
+          <p className="mt-1 text-sm text-zinc-300">
+            Entri ini akan dihapus dari riwayat Anda.
+          </p>
+          <div className="mt-3 flex gap-3">
+            <Button
+              variant="danger"
+              onClick={onKonfirmasiHapus}
+              loading={menghapus}
+              className="flex-1"
+            >
+              Ya, hapus
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={onBatalHapus}
+              disabled={menghapus}
+              className="flex-1"
+            >
+              Batal
+            </Button>
           </div>
-        ) : (
-          <button
-            type="button"
-            onClick={onMintaHapus}
-            className={`${KELAS_TOMBOL_SEKUNDER} mt-4 text-red-400`}
-          >
-            Hapus
-          </button>
-        ))}
+        </div>
+      ) : (
+        <Button
+          variant="danger"
+          onClick={onMintaHapus}
+          className="mt-4"
+        >
+          Hapus
+        </Button>
+      )}
     </li>
   );
 }
@@ -294,7 +360,6 @@ export default function RiwayatPage() {
   const [entri, setEntri] = useState<EntriRiwayat[]>([]);
   const [namaPengguna, setNamaPengguna] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("semua");
-  const [sebagianGagal, setSebagianGagal] = useState(false);
   const [adaLagi, setAdaLagi] = useState(false);
   const [konfirmasiHapus, setKonfirmasiHapus] = useState<string | null>(null);
   const [menghapusId, setMenghapusId] = useState<string | null>(null);
@@ -304,45 +369,28 @@ export default function RiwayatPage() {
   const muatRiwayat = useCallback(async () => {
     setStatus("memuat");
     setPesan(null);
-    setSebagianGagal(false);
-    const [hasilKesehatan, hasilWifi, hasilAi, hasilNama] =
-      await Promise.allSettled([
-        ambilDaftar<HealthCheck>("/api/health-checks"),
-        ambilDaftar<WifiReport>("/api/wifi-reports"),
-        ambilDaftar<AiDiagnosis>("/api/ai/diagnoses"),
+    try {
+      const [envelope, nama] = await Promise.all([
+        fetchJson<ItemRiwayatApi[]>(`/api/history?limit=${BATAS_DAFTAR}`),
         ambilNamaPengguna(),
       ]);
-    const daftarHasil = [hasilKesehatan, hasilWifi, hasilAi];
-    const gagal = daftarHasil.filter(
-      (hasil): hasil is PromiseRejectedResult =>
-        hasil.status === "rejected",
-    );
-    if (gagal.length === daftarHasil.length) {
-      setStatus(
-        gagal.some((hasil) => galatKarenaSesi(hasil.reason))
-          ? "sesi-habis"
-          : "galat",
-      );
-      return;
+      const daftar = Array.isArray(envelope.data) ? envelope.data : [];
+      const dipetakan: EntriRiwayat[] = [];
+      for (const item of daftar) {
+        const entriBaru = petakanItem(item);
+        if (entriBaru) dipetakan.push(entriBaru);
+      }
+      // Meta paginasi cursor ada di meta.pagination (kontrak §0.6).
+      const paginasi = envelope.meta?.pagination as
+        | { has_more?: unknown }
+        | undefined;
+      setAdaLagi(paginasi?.has_more === true);
+      setNamaPengguna(nama);
+      setEntri(dipetakan);
+      setStatus("siap");
+    } catch (err) {
+      setStatus(galatKarenaSesi(err) ? "sesi-habis" : "galat");
     }
-    if (gagal.length > 0) setSebagianGagal(true);
-    const kesehatan =
-      hasilKesehatan.status === "fulfilled"
-        ? hasilKesehatan.value.items
-        : [];
-    const wifi =
-      hasilWifi.status === "fulfilled" ? hasilWifi.value.items : [];
-    const ai = hasilAi.status === "fulfilled" ? hasilAi.value.items : [];
-    setAdaLagi(
-      daftarHasil.some(
-        (hasil) => hasil.status === "fulfilled" && hasil.value.adaLagi,
-      ),
-    );
-    setNamaPengguna(
-      hasilNama.status === "fulfilled" ? hasilNama.value : null,
-    );
-    setEntri(gabungRiwayat(kesehatan, wifi, ai));
-    setStatus("siap");
   }, []);
 
   useEffect(() => {
@@ -371,11 +419,9 @@ export default function RiwayatPage() {
   );
 
   const hapusEntri = async (target: EntriRiwayat) => {
-    const path = pathHapus(target);
-    if (!path) return;
     setMenghapusId(target.id);
     try {
-      await fetchJson(path, { method: "DELETE", credentials: "include" });
+      await panggilApi(pathHapus(target), { method: "DELETE" });
       setEntri((daftar) => daftar.filter((item) => item.id !== target.id));
       setPesan({ jenis: "sukses", teks: "Entri berhasil dihapus." });
     } catch {
@@ -408,7 +454,7 @@ export default function RiwayatPage() {
   };
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-2xl bg-black px-4 py-6 text-zinc-100 sm:px-6">
+    <div className="mx-auto min-h-screen w-full max-w-2xl bg-black px-4 py-6 text-zinc-100 sm:px-6">
       <h1 className="text-2xl font-bold tracking-tight">Riwayat</h1>
       <p className="mt-1 text-sm text-zinc-300">
         Semua hasil pemeriksaan dan tes WiFi Anda.
@@ -451,13 +497,13 @@ export default function RiwayatPage() {
           <p className="font-semibold text-zinc-100">
             Data tidak bisa dimuat. Coba lagi.
           </p>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
             onClick={() => void muatRiwayat()}
-            className={`${KELAS_TOMBOL_SEKUNDER} mt-4`}
+            className="mt-4"
           >
             Coba lagi
-          </button>
+          </Button>
         </div>
       )}
 
@@ -466,7 +512,10 @@ export default function RiwayatPage() {
           <p className="font-semibold text-zinc-100">
             Sesi sudah berakhir. Masuk lagi untuk lanjut.
           </p>
-          <Link to="/masuk" className={`${KELAS_TOMBOL_UTAMA} mt-4`}>
+          <Link
+            to="/masuk"
+            className="mt-4 inline-flex min-h-[48px] items-center justify-center rounded-lg bg-white px-5 text-base font-medium text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+          >
             Masuk
           </Link>
         </div>
@@ -474,37 +523,19 @@ export default function RiwayatPage() {
 
       {status === "siap" && (
         <div>
-          {sebagianGagal && (
-            <div
-              role="alert"
-              className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-yellow-400/40 bg-yellow-400/10 p-4"
-            >
-              <p className="text-sm text-zinc-100">
-                Sebagian riwayat tidak bisa dimuat.
-              </p>
-              <button
-                type="button"
-                onClick={() => void muatRiwayat()}
-                className={KELAS_TOMBOL_SEKUNDER}
-              >
-                Coba lagi
-              </button>
-            </div>
-          )}
-
-          <button
-            type="button"
+          <Button
             onClick={() => void unduhPdf()}
-            disabled={membuatPdf}
-            className={`${KELAS_TOMBOL_UTAMA} mt-6 w-full`}
+            loading={membuatPdf}
+            fullWidth
+            className="mt-6"
           >
-            {membuatPdf ? "Membuat laporan…" : "Unduh laporan PDF"}
-          </button>
+            Unduh laporan PDF
+          </Button>
 
           {adaLagi && (
             <p className="mt-3 text-xs text-zinc-400">
-              Menampilkan 100 entri terbaru per jenis. Entri yang lebih lama
-              tidak tampil di halaman ini.
+              Menampilkan 100 entri terbaru. Entri yang lebih lama tidak
+              tampil di halaman ini.
             </p>
           )}
 
@@ -573,6 +604,6 @@ export default function RiwayatPage() {
           )}
         </div>
       )}
-    </main>
+    </div>
   );
 }

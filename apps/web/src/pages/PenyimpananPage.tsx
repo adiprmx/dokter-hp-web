@@ -218,7 +218,7 @@ export default function PenyimpananPage() {
       : null;
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 pb-16 pt-6">
+    <div className="mx-auto w-full max-w-2xl px-4 pb-16 pt-6">
       <h1
         ref={judulRef}
         tabIndex={-1}
@@ -429,6 +429,6 @@ export default function PenyimpananPage() {
           </div>
         ) : null}
       </section>
-    </main>
+    </div>
   );
 }

@@ -89,7 +89,7 @@ describe('cookie sesi', () => {
     expect(cookie).toContain(`Max-Age=${MASA_BERLAKU_SESI_DETIK}`);
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('Secure');
-    expect(cookie).toContain('SameSite=Lax');
+    expect(cookie).toContain('SameSite=None');
   });
 
   it('masa berlaku sesi 30 hari', () => {
@@ -105,7 +105,7 @@ describe('cookie sesi', () => {
 
   it('buatCookie meng-encode nilai dan menghormati opsi', () => {
     expect(buatCookie('nama', 'a b=c', { maxAgeDetik: 60, path: '/api' })).toBe(
-      'nama=a%20b%3Dc; Path=/api; Max-Age=60; HttpOnly; Secure; SameSite=Lax',
+      'nama=a%20b%3Dc; Path=/api; Max-Age=60; HttpOnly; Secure; SameSite=None',
     );
   });
 
@@ -191,6 +191,8 @@ function sesiUji(overrides: Partial<BarisSesi> = {}): BarisSesi {
     token_hash: 'hash-token-uji',
     expires_at: '2026-12-17T12:00:00.000Z',
     dibuat_pada: '2026-11-17T12:00:00.000Z',
+    user_agent: 'Mozilla/5.0 (Uji)',
+    ip_terakhir: '203.0.113.7',
     ...overrides,
   };
 }
@@ -212,6 +214,27 @@ describe('buatSesi', () => {
     expect(nilai[2]).toBe(await hashToken(hasil.token));
     expect(nilai[3]).toBe('2026-12-17T12:00:00.000Z');
     expect(nilai[4]).toBe('2026-11-17T12:00:00.000Z');
+    // Tanpa user_agent/ip_terakhir, kedua kolom diisi null (K-44).
+    expect(nilai[5]).toBeNull();
+    expect(nilai[6]).toBeNull();
+    expect(hasil.sesi.user_agent).toBeNull();
+    expect(hasil.sesi.ip_terakhir).toBeNull();
+  });
+
+  it('menyimpan user_agent dan ip_terakhir bila diberikan (K-44)', async () => {
+    const { db, nilaiTerikat } = buatMockDbDenganData({});
+    const sekarang = new Date('2026-11-17T12:00:00.000Z');
+    const hasil = await buatSesi(db, {
+      idPengguna: 'user-1',
+      sekarang,
+      userAgent: 'Mozilla/5.0 (Uji)',
+      ipTerakhir: '203.0.113.7',
+    });
+    const nilai = nilaiTerikat[0];
+    expect(nilai[5]).toBe('Mozilla/5.0 (Uji)');
+    expect(nilai[6]).toBe('203.0.113.7');
+    expect(hasil.sesi.user_agent).toBe('Mozilla/5.0 (Uji)');
+    expect(hasil.sesi.ip_terakhir).toBe('203.0.113.7');
   });
 });
 

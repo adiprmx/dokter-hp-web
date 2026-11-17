@@ -13,17 +13,18 @@
 import { Hono } from 'hono';
 import { authMiddleware, getUserId, type AppEnv } from '../auth/middleware';
 import {
-  buatPaginationMeta,
+  cursorClause,
   newId,
   nowIso,
+  paginateRows,
+  parseCursorParam,
   parseLimitParam,
-  parseOffsetParam,
   queryAll,
   queryOne,
-  queryTotal,
   runQuery,
   type D1Like,
 } from '../lib/db';
+import { batasLaju } from '../lib/ratelimit';
 import {
   assertValid,
   MAX_SAMPEL_PER_LAPORAN,
@@ -115,7 +116,9 @@ export function toWifiReportResponse(row: WifiReportRow): WifiReportResponse {
 }
 
 export const wifiRoutes = new Hono<AppEnv>();
-wifiRoutes.use(authMiddleware);
+// Middleware dibatasi ke prefix rute ini (lihat health.ts).
+wifiRoutes.use('/wifi-reports*', authMiddleware);
+wifiRoutes.use('/wifi-reports*', batasLaju);
 
 /** Memastikan laporan ada dan milik pengguna; mengembalikan barisnya atau melempar 404. */
 async function ambilLaporanMilik(
@@ -210,13 +213,13 @@ wifiRoutes.post(
   }),
 );
 
-// GET /wifi-reports — daftar milik pengguna, terbaru dulu (limit/offset + total).
+// GET /wifi-reports — daftar milik pengguna, terbaru dulu (cursor keyset, K-32).
 wifiRoutes.get(
   '/wifi-reports',
   bungkus<AppEnv>(async (c) => {
     const userId = getUserId(c);
     const limit = assertValid(parseLimitParam(c.req.query('limit')));
-    const offset = assertValid(parseOffsetParam(c.req.query('offset')));
+    const cursor = assertValid(parseCursorParam(c.req.query('cursor')));
     const filterSumber =
       c.req.query('sumber') === undefined
         ? null
@@ -227,20 +230,17 @@ wifiRoutes.get(
       where += ' AND sumber = ?';
       params.push(filterSumber);
     }
-    const total = await queryTotal(
-      c.env.DB,
-      `SELECT COUNT(*) AS jumlah FROM wifi_reports ${where}`,
-      ...params,
-    );
+    const klausul = cursorClause(cursor);
     const rows = await queryAll<WifiReportRow>(
       c.env.DB,
-      `SELECT ${KOLOM_LAPORAN} FROM wifi_reports ${where} ORDER BY dibuat_pada DESC, id DESC LIMIT ? OFFSET ?`,
+      `SELECT ${KOLOM_LAPORAN} FROM wifi_reports ${where} ${klausul.sql} ORDER BY dibuat_pada DESC, id DESC LIMIT ?`,
       ...params,
-      limit,
-      offset,
+      ...klausul.params,
+      limit + 1,
     );
-    return balasSukses(c, rows.map(toWifiReportResponse), 200, {
-      pagination: buatPaginationMeta(limit, offset, total),
+    const { items, meta } = paginateRows(rows, limit);
+    return balasSukses(c, items.map(toWifiReportResponse), 200, {
+      pagination: meta,
     });
   }),
 );
@@ -311,9 +311,8 @@ wifiRoutes.post(
   }),
 );
 
-// GET /wifi-reports/:id/samples — daftar sampel tes bertahan milik pengguna.
-// (Tambahan di luar api-contracts.md; kontrak hanya mendefinisikan
-// sampel lewat detail laporan 4.3.)
+// GET /wifi-reports/:id/samples — daftar sampel tes bertahan milik pengguna
+// (endpoint #29, kontrak bagian 4.6).
 wifiRoutes.get(
   '/wifi-reports/:id/samples',
   bungkus<AppEnv>(async (c) => {

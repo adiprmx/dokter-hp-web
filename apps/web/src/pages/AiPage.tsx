@@ -12,21 +12,19 @@ import {
   validasiPertanyaan,
 } from "../lib/ai";
 import type { RingkasanPemeriksaan } from "../lib/ai";
+import { ApiError, panggilApi } from "../lib/api";
 
 // Layar 10 — Diagnosis AI (rute `/ai`, wajib masuk). Semua teks
 // mengikuti docs/copy.md §10 dan §13; contoh pertanyaan dari
 // docs/panduan-pengguna.md §6.2. Frontend tidak pernah memanggil
 // Gemini langsung — pertanyaan dikirim ke POST /api/ai/diagnose
-// dan kunci API hanya ada di server (Worker).
-//
-// Catatan API: halaman ini memakai fetch sendiri dengan
-// credentials: "include" (cookie sesi HttpOnly) dan membaca kode
-// galat dari envelope API (AI_QUOTA_HABIS, AI_TIDAK_TERSEDIA,
-// UNAUTHORIZED, SESSION_LOCKED). lib/api.ts belum mengirim
-// credentials dan membuang kode galat (audit koordinator K-13) —
-// jangan ganti pemanggilan di sini dengan fetchJson sebelum K-13
-// diperbaiki. Basis API dibaca dari VITE_API_BASE_URL (K-13),
-// dengan VITE_API_URL sebagai cadangan, lalu jalur relatif /api.
+// dan kunci API hanya ada di server (Worker). Pemanggilan API
+// memakai lib/api.ts (credentials: "include" + ApiError bertipe,
+// K-13/K-16); kode galat yang ditangani: AI_QUOTA_HABIS,
+// UNAUTHORIZED, SESSION_LOCKED, RATE_LIMITED, DATABASE_SIBUK.
+// Kode 502 AI_TIDAK_TERSEDIA sudah pensiun (K-23): bila Gemini
+// gagal, server menjawab 200 dengan jawaban fallback berlabel
+// (sumber_jawaban "aturan").
 
 // Indikator fokus keyboard (a11y.md §3.2) — dipasang eksplisit di
 // setiap elemen interaktif karena tokens.css belum tentu terimpor.
@@ -50,57 +48,6 @@ const CONTOH_PERTANYAAN = [
   "Baterai HP cepat habis sejak kemarin. Dari 100% ke 40% dalam 3 jam padahal hanya dipakai chat. Apa yang harus diperiksa?",
   "Penyimpanan hampir penuh, tersisa 2 GB dari 128 GB. Apa yang aman dihapus?",
 ];
-
-const API_BASE = (
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  (import.meta.env.VITE_API_URL as string | undefined) ??
-  ""
-).replace(/\/$/, "");
-
-/** Galat API dengan kode mesin dari envelope (docs/api-contracts.md §0.5). */
-class GalatApi extends Error {
-  kode: string;
-  status: number;
-
-  constructor(kode: string, pesan: string, status: number) {
-    super(pesan);
-    this.name = "GalatApi";
-    this.kode = kode;
-    this.status = status;
-  }
-}
-
-/**
- * Memanggil endpoint API dan mengembalikan isi `data` envelope.
- * Cookie sesi ikut terkirim (credentials: "include"). Galat
- * dilempar sebagai GalatApi dengan kode dari envelope.
- */
-async function panggilApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
-  let json: unknown = null;
-  try {
-    json = await res.json();
-  } catch {
-    json = null;
-  }
-  if (!res.ok) {
-    const galat = (
-      json as { error?: { code?: unknown; message?: unknown } } | null
-    )?.error;
-    const kode =
-      typeof galat?.code === "string" ? galat.code : "INTERNAL_ERROR";
-    const pesan =
-      typeof galat?.message === "string"
-        ? galat.message
-        : "Terjadi kesalahan. Coba lagi.";
-    throw new GalatApi(kode, pesan, res.status);
-  }
-  return (json as { data?: unknown } | null)?.data as T;
-}
 
 interface Diagnosis {
   id: string;
@@ -184,7 +131,6 @@ export default function AiPage() {
   const [mengirim, setMengirim] = useState(false);
   const [sisaKuota, setSisaKuota] = useState<number | null>(null);
   const [kuotaHabis, setKuotaHabis] = useState(false);
-  const [aiTidakTersedia, setAiTidakTersedia] = useState(false);
   const [galatKirim, setGalatKirim] = useState<string | null>(null);
   const [sesiBerakhir, setSesiBerakhir] = useState(false);
   const [sesiTerkunci, setSesiTerkunci] = useState(false);
@@ -235,9 +181,9 @@ export default function AiPage() {
       if (!aktifRef.current) {
         return;
       }
-      if (galat instanceof GalatApi && galat.kode === "UNAUTHORIZED") {
+      if (galat instanceof ApiError && galat.code === "UNAUTHORIZED") {
         setSesiBerakhir(true);
-      } else if (galat instanceof GalatApi && galat.kode === "SESSION_LOCKED") {
+      } else if (galat instanceof ApiError && galat.code === "SESSION_LOCKED") {
         setSesiTerkunci(true);
       } else {
         setStatusRiwayat("galat");
@@ -273,9 +219,9 @@ export default function AiPage() {
       if (!aktifRef.current) {
         return;
       }
-      if (galat instanceof GalatApi && galat.kode === "UNAUTHORIZED") {
+      if (galat instanceof ApiError && galat.code === "UNAUTHORIZED") {
         setSesiBerakhir(true);
-      } else if (galat instanceof GalatApi && galat.kode === "SESSION_LOCKED") {
+      } else if (galat instanceof ApiError && galat.code === "SESSION_LOCKED") {
         setSesiTerkunci(true);
       } else {
         setStatusKonteks("galat");
@@ -297,7 +243,6 @@ export default function AiPage() {
     }
     setGalatForm(null);
     setGalatKirim(null);
-    setAiTidakTersedia(false);
     const hasil = validasiPertanyaan(pertanyaan);
     if (!hasil.ok) {
       setGalatForm(hasil.pesan);
@@ -374,26 +319,23 @@ export default function AiPage() {
         );
       }
     } catch (galat) {
-      if (galat instanceof GalatApi) {
-        if (galat.kode === "AI_QUOTA_HABIS") {
+      if (galat instanceof ApiError) {
+        if (galat.code === "AI_QUOTA_HABIS") {
           setSisaKuota(0);
           setKuotaHabis(true);
           setPengumuman(
             "Batas 20 pertanyaan hari ini sudah habis. Batas kembali besok.",
           );
-        } else if (galat.kode === "AI_TIDAK_TERSEDIA") {
-          setAiTidakTersedia(true);
-          setPengumuman("Diagnosis AI sedang tidak tersedia, coba lagi nanti.");
-        } else if (galat.kode === "UNAUTHORIZED") {
+        } else if (galat.code === "UNAUTHORIZED") {
           setSesiBerakhir(true);
           setPengumuman("Sesi sudah berakhir. Masuk lagi untuk lanjut.");
-        } else if (galat.kode === "SESSION_LOCKED") {
+        } else if (galat.code === "SESSION_LOCKED") {
           setSesiTerkunci(true);
           setPengumuman("Aplikasi terkunci, masukkan PIN untuk membuka.");
-        } else if (galat.kode === "RATE_LIMITED") {
+        } else if (galat.code === "RATE_LIMITED") {
           setGalatKirim("Terlalu sering, coba lagi sebentar.");
           setPengumuman("Terlalu sering, coba lagi sebentar.");
-        } else if (galat.kode === "DATABASE_SIBUK") {
+        } else if (galat.code === "DATABASE_SIBUK") {
           setGalatKirim("Server sedang sibuk, coba lagi nanti.");
           setPengumuman("Server sedang sibuk, coba lagi nanti.");
         } else {
@@ -416,7 +358,6 @@ export default function AiPage() {
 
   function cobaLagiKirim() {
     setGalatKirim(null);
-    setAiTidakTersedia(false);
     textareaRef.current?.focus();
   }
 
@@ -441,7 +382,7 @@ export default function AiPage() {
   const formNonaktif = mengirim || kuotaHabis;
 
   return (
-    <main className="min-h-screen bg-black text-zinc-100">
+    <div className="min-h-screen bg-black text-zinc-100">
       <div className="mx-auto w-full max-w-2xl px-5 pb-16 pt-10 sm:pt-14">
         <nav aria-label="Navigasi halaman">
           <Link
@@ -665,36 +606,6 @@ export default function AiPage() {
                 </ul>
               </div>
             </section>
-
-            {aiTidakTersedia ? (
-              <section
-                aria-labelledby="ai-tidak-tersedia"
-                role="alert"
-                className="mt-8 rounded-xl border border-blue-400/45 bg-blue-400/10 px-5 py-4"
-              >
-                <h2
-                  id="ai-tidak-tersedia"
-                  className="text-lg font-semibold text-blue-400"
-                >
-                  Diagnosis AI sedang tidak tersedia
-                </h2>
-                <p className="mt-2 text-base leading-relaxed text-zinc-100">
-                  Diagnosis AI sedang tidak tersedia, coba lagi nanti.
-                </p>
-                <p className="mt-2 text-base leading-relaxed text-zinc-100">
-                  Sementara itu, panduan langkah perbaikan manual tetap bisa
-                  dibaca.
-                </p>
-                <DaftarPanduan />
-                <button
-                  type="button"
-                  onClick={cobaLagiKirim}
-                  className={TOMBOL_SEKUNDER}
-                >
-                  Coba lagi
-                </button>
-              </section>
-            ) : null}
 
             {galatKirim ? (
               <section
@@ -921,6 +832,6 @@ export default function AiPage() {
           {pengumuman}
         </div>
       </div>
-    </main>
+    </div>
   );
 }

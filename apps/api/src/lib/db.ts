@@ -6,11 +6,16 @@
 // dengan D1 asli maupun dengan D1 tiruan pada unit test tanpa
 // bergantung pada runtime Cloudflare.
 //
-// Paginasi:
-// - Offset (limit/offset + total) adalah yang dipakai endpoint daftar,
-//   sesuai docs/api-contracts.md bagian 0.6.
-// - Cursor keyset (encodeCursor/decodeCursor/cursorClause) tetap
-//   tersedia untuk pemakaian mendatang (misalnya sinkronisasi APK).
+// Paginasi (keputusan koordinator K-32):
+// - Cursor keyset (encodeCursor/decodeCursor/cursorClause +
+//   paginateRows) adalah paginasi kanonis SEMUA endpoint daftar.
+//   Parameter: `limit` (bawaan 20, 1-100) + `cursor` (string
+//   base64url buram dari meta.pagination.next_cursor halaman
+//   sebelumnya). Meta respons: { limit, next_cursor, has_more }.
+//   Cursor yang cacat ditolak 400 VALIDATION_ERROR.
+// - Paginasi offset (limit/offset + total) DIPENSIUNKAN dan
+//   dihapus: helper parseOffsetParam/buatPaginationMeta tidak ada
+//   lagi. Urutan daftar selalu dibuat_pada DESC, id DESC.
 
 import type { HasilValidasi } from './validate';
 
@@ -97,28 +102,11 @@ export async function queryTotal(
 }
 
 // ------------------------------------------------------------------
-// Paginasi offset (kontrak api-contracts.md bagian 0.6)
+// Paginasi cursor (kontrak api-contracts.md bagian 0.6, K-32)
 // ------------------------------------------------------------------
 
 export const DEFAULT_LIMIT = 20;
 export const MAX_LIMIT = 100;
-
-/** Meta paginasi offset: dipakai di meta.pagination respons daftar. */
-export interface PaginationMeta {
-  limit: number;
-  offset: number;
-  total: number;
-  has_more: boolean;
-}
-
-/** Merakit meta paginasi dari limit, offset, dan total baris. */
-export function buatPaginationMeta(
-  limit: number,
-  offset: number,
-  total: number,
-): PaginationMeta {
-  return { limit, offset, total, has_more: offset + limit < total };
-}
 
 /**
  * Mengurai parameter `limit` secara ketat (kontrak 0.6):
@@ -133,22 +121,6 @@ export function parseLimitParam(raw: string | undefined): HasilValidasi<number> 
   const angka = Number.parseInt(raw, 10);
   if (angka < 1) return { ok: true, value: 1 };
   if (angka > MAX_LIMIT) return { ok: true, value: MAX_LIMIT };
-  return { ok: true, value: angka };
-}
-
-/**
- * Mengurai parameter `offset` secara ketat (kontrak 0.6):
- * tidak ada -> 0; bukan angka atau negatif -> galat.
- */
-export function parseOffsetParam(raw: string | undefined): HasilValidasi<number> {
-  if (raw === undefined) return { ok: true, value: 0 };
-  if (raw.trim() === '' || !/^-?\d+$/.test(raw.trim())) {
-    return { ok: false, field: 'offset', message: 'Offset harus berupa angka.' };
-  }
-  const angka = Number.parseInt(raw, 10);
-  if (angka < 0) {
-    return { ok: false, field: 'offset', message: 'Offset tidak boleh negatif.' };
-  }
   return { ok: true, value: angka };
 }
 
@@ -207,6 +179,22 @@ export function decodeCursor(raw: string | undefined): Cursor | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Mengurai parameter query `cursor` secara ketat (kontrak 0.6):
+ * tidak ada atau kosong -> null (halaman pertama); string yang
+ * tidak bisa didekode menjadi cursor valid -> galat
+ * VALIDATION_ERROR (bukan diam-diam halaman pertama, agar client
+ * yang mengirim cursor rusak langsung tahu).
+ */
+export function parseCursorParam(raw: string | undefined): HasilValidasi<Cursor | null> {
+  if (raw === undefined || raw === '') return { ok: true, value: null };
+  const cursor = decodeCursor(raw);
+  if (!cursor) {
+    return { ok: false, field: 'cursor', message: 'Cursor tidak valid.' };
+  }
+  return { ok: true, value: cursor };
 }
 
 export interface CursorClause {

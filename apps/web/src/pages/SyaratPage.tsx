@@ -12,7 +12,7 @@ export default function SyaratPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-black px-4 py-6 text-zinc-100">
+    <div className="min-h-screen bg-black px-4 py-6 text-zinc-100">
       <div className="mx-auto w-full max-w-2xl">
         <Link
           to="/tentang"
@@ -243,6 +243,6 @@ export default function SyaratPage() {
           .
         </p>
       </div>
-    </main>
+    </div>
   );
 }

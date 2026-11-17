@@ -1,0 +1,84 @@
+name: Permintaan fitur
+description: Usulkan fitur baru atau perbaikan untuk Dokter HP Web App
+title: "[Fitur] "
+labels: ["enhancement"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Terima kasih atas usulannya. Setiap usulan dibaca dan dipertimbangkan,
+        tetapi tidak semua usulan bisa dibuat dan tidak ada janji tanggal
+        pengerjaan.
+
+        **Perlu diketahui:** browser tidak bisa membaca sensor HP secara
+        langsung (level baterai, penyimpanan, RAM, suhu, atau daftar
+        aplikasi). Usulan yang membutuhkan pembacaan sensor langsung
+        adalah keterbatasan web, bukan kekurangan aplikasi — untuk
+        kebutuhan itu, silakan pakai APK Dokter HP.
+
+  - type: textarea
+    id: masalah
+    attributes:
+      label: Masalah yang ingin diselesaikan
+      description: Jelaskan masalah atau kebutuhan yang Anda alami.
+      placeholder: "Contoh: Saya ingin melihat riwayat tes WiFi per minggu, bukan hanya daftar satu per satu."
+      value: ""
+    validations:
+      required: true
+
+  - type: textarea
+    id: usulan
+    attributes:
+      label: Usulan
+      description: Jelaskan fitur yang Anda usulkan, sesederhana mungkin.
+      placeholder: "Contoh: Tambahkan ringkasan mingguan di halaman Riwayat yang menampilkan kecepatan rata-rata per minggu."
+      value: ""
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area yang berkaitan
+      description: Pilih bagian aplikasi yang berkaitan dengan usulan ini.
+      options:
+        - Dokter WiFi (tes kecepatan, latensi, tes bertahan 30 detik)
+        - Dashboard (skor kesehatan, grafik riwayat)
+        - Diagnosis AI
+        - Masuk, akun, atau PIN
+        - Riwayat atau laporan PDF
+        - Pengaturan akun
+        - Tampilan umum / navigasi
+        - Fitur baru yang belum ada
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatif
+    attributes:
+      label: Alternatif yang sudah dicoba (bila ada)
+      description: Bila sudah ada cara lain untuk mengatasi masalah ini, tulis di sini.
+      placeholder: "Contoh: Saat ini saya mencatat hasil tes secara manual di catatan HP."
+      value: ""
+    validations:
+      required: false
+
+  - type: textarea
+    id: tambahan
+    attributes:
+      label: Informasi tambahan (bila ada)
+      description: Tangkapan layar, contoh, atau konteks lain yang membantu menjelaskan usulan.
+      value: ""
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: konfirmasi
+    attributes:
+      label: Konfirmasi
+      options:
+        - label: Saya sudah memeriksa daftar issue yang ada dan usulan ini belum pernah dibuat sebelumnya.
+          required: true
+        - label: Saya memahami bahwa tidak semua usulan bisa dibuat dan tidak ada janji tanggal pengerjaan.
+          required: true

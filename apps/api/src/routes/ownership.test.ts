@@ -120,8 +120,8 @@ function seedAwal(): Seed {
       { id: AI_B, user_id: USER_B, health_check_id: HC_B, pertanyaan: 'Baterai boros.', jawaban: 'Periksa aplikasi.', dibuat_pada: '2026-11-17T07:00:00.000Z' },
     ],
     sessions: [
-      { id: SESI_A_UTAMA, user_id: USER_A, token_hash: 'hash-a-utama', expires_at: '2026-12-17T00:00:00.000Z', dibuat_pada: '2026-11-17T00:00:00.000Z' },
-      { id: SESI_A_LAIN, user_id: USER_A, token_hash: 'hash-a-lain', expires_at: '2026-12-16T00:00:00.000Z', dibuat_pada: '2026-11-16T00:00:00.000Z' },
+      { id: SESI_A_UTAMA, user_id: USER_A, token_hash: 'hash-a-utama', expires_at: '2026-12-17T00:00:00.000Z', dibuat_pada: '2026-11-17T00:00:00.000Z', user_agent: 'Mozilla/5.0 (Uji)', ip_terakhir: '203.0.113.7' },
+      { id: SESI_A_LAIN, user_id: USER_A, token_hash: 'hash-a-lain', expires_at: '2026-12-16T00:00:00.000Z', dibuat_pada: '2026-11-16T00:00:00.000Z', user_agent: null, ip_terakhir: null },
       { id: SESI_A_KEDALUWARSA, user_id: USER_A, token_hash: 'hash-a-kadaluarsa', expires_at: '2026-01-01T00:00:00.000Z', dibuat_pada: '2025-12-01T00:00:00.000Z' },
       { id: SESI_B, user_id: USER_B, token_hash: 'hash-b', expires_at: '2026-12-17T00:00:00.000Z', dibuat_pada: '2026-11-17T00:00:00.000Z' },
     ],
@@ -186,7 +186,7 @@ describe('kepemilikan health_checks', () => {
     expect(body.success).toBe(true);
     const ids = (body.data as any[]).map((r) => r.id);
     expect(ids).toEqual([HC_A]);
-    expect(body.meta.pagination).toEqual({ limit: 20, offset: 0, total: 1, has_more: false });
+    expect(body.meta.pagination).toEqual({ limit: 20, next_cursor: null, has_more: false });
   });
 
   it('detail milik pengguna lain mengembalikan 404 NOT_FOUND', async () => {
@@ -278,7 +278,7 @@ describe('kepemilikan wifi_reports dan sampel', () => {
     const { status, body } = await minta(app, db, '/wifi-reports', { userId: USER_A });
     expect(status).toBe(200);
     expect((body.data as any[]).map((r) => r.id)).toEqual([WR_A, WR_A_BIASA]);
-    expect(body.meta.pagination.total).toBe(2);
+    expect(body.meta.pagination).toEqual({ limit: 20, next_cursor: null, has_more: false });
   });
 
   it('detail milik pengguna lain mengembalikan 404 tanpa sampel bocor', async () => {
@@ -423,7 +423,7 @@ describe('riwayat gabungan', () => {
     const items = body.data as any[];
     expect(items.map((i) => i.id)).toEqual([AI_A, WR_A, WR_A_BIASA, HC_A]);
     expect(items.map((i) => i.jenis)).toEqual(['ai', 'wifi', 'wifi', 'kesehatan']);
-    expect(body.meta.pagination).toEqual({ limit: 20, offset: 0, total: 4, has_more: false });
+    expect(body.meta.pagination).toEqual({ limit: 20, next_cursor: null, has_more: false });
   });
 
   it('filter jenis wifi hanya mengembalikan laporan WiFi milik pengguna', async () => {
@@ -431,7 +431,8 @@ describe('riwayat gabungan', () => {
     const items = body.data as any[];
     expect(items).toHaveLength(2);
     expect(items.every((i) => i.jenis === 'wifi')).toBe(true);
-    expect(body.meta.pagination.total).toBe(2);
+    expect(body.meta.pagination.has_more).toBe(false);
+    expect(body.meta.pagination.next_cursor).toBeNull();
   });
 
   it('jenis tidak dikenal mengembalikan 400', async () => {
@@ -439,10 +440,26 @@ describe('riwayat gabungan', () => {
     expect(status).toBe(400);
   });
 
-  it('offset memotong gabungan dengan benar', async () => {
-    const { body } = await minta(app, db, '/history?limit=2&offset=2', { userId: USER_A });
-    expect((body.data as any[]).map((i) => i.id)).toEqual([WR_A_BIASA, HC_A]);
-    expect(body.meta.pagination.has_more).toBe(false);
+  it('cursor memotong gabungan dengan benar (K-32)', async () => {
+    const halaman1 = await minta(app, db, '/history?limit=2', { userId: USER_A });
+    expect((halaman1.body.data as any[]).map((i) => i.id)).toEqual([AI_A, WR_A]);
+    expect(halaman1.body.meta.pagination.has_more).toBe(true);
+    const cursor = halaman1.body.meta.pagination.next_cursor as string;
+    expect(typeof cursor).toBe('string');
+    const halaman2 = await minta(app, db, `/history?limit=2&cursor=${encodeURIComponent(cursor)}`, {
+      userId: USER_A,
+    });
+    expect((halaman2.body.data as any[]).map((i) => i.id)).toEqual([WR_A_BIASA, HC_A]);
+    expect(halaman2.body.meta.pagination.has_more).toBe(false);
+    expect(halaman2.body.meta.pagination.next_cursor).toBeNull();
+  });
+
+  it('cursor cacat mengembalikan 400 VALIDATION_ERROR', async () => {
+    const { status, body } = await minta(app, db, '/history?cursor=bukan-cursor!!!', {
+      userId: USER_A,
+    });
+    expect(status).toBe(400);
+    expect(body.error?.code).toBe('VALIDATION_ERROR');
   });
 
   it('hapus diagnosis AI milik pengguna lain mengembalikan 404 dan baris utuh', async () => {
@@ -514,8 +531,11 @@ describe('akun', () => {
     expect(items[0].saat_ini).toBe(true);
     expect(items[1].saat_ini).toBe(false);
     expect(items[0].kedaluwarsa_pada).toBe('2026-12-17T00:00:00.000Z');
-    expect(items[0].user_agent).toBeNull();
-    expect(body.meta.pagination.total).toBe(2);
+    expect(items[0].user_agent).toBe('Mozilla/5.0 (Uji)');
+    expect(items[0].ip_terakhir).toBe('203.0.113.7');
+    expect(items[1].user_agent).toBeNull();
+    expect(items[1].ip_terakhir).toBeNull();
+    expect(body.meta.pagination).toEqual({ limit: 20, next_cursor: null, has_more: false });
   });
 
   it('hapus sesi milik pengguna lain mengembalikan 404', async () => {
@@ -572,6 +592,20 @@ describe('akun', () => {
     expect(res.headers.get('Content-Disposition') ?? '').toContain('dokter-hp-export-');
   });
 
+  it('ekspor ke-6 dalam sehari ditolak 429 RATE_LIMITED + Retry-After (K-42/K-59)', async () => {
+    for (let i = 0; i < 5; i++) {
+      const { status } = await minta(app, db, '/account/export', { userId: USER_A });
+      expect(status).toBe(200);
+    }
+    const { status, body, res } = await minta(app, db, '/account/export', { userId: USER_A });
+    expect(status).toBe(429);
+    expect(body.error?.code).toBe('RATE_LIMITED');
+    const retryAfter = Number(res.headers.get('Retry-After'));
+    expect(Number.isFinite(retryAfter)).toBe(true);
+    expect(retryAfter).toBeGreaterThan(0);
+    expect(retryAfter).toBeLessThanOrEqual(86_400);
+  });
+
   it('hapus akun tanpa konfirmasi mengembalikan 400', async () => {
     const { status, body } = await minta(app, db, '/account', {
       method: 'DELETE',
@@ -618,6 +652,18 @@ describe('akun', () => {
     expect(db.baris('wifi_reports').some((r) => r.id === WR_B)).toBe(true);
     expect(db.baris('ai_diagnoses').some((r) => r.id === AI_B)).toBe(true);
     expect(db.baris('sessions').some((r) => r.id === SESI_B)).toBe(true);
+  });
+
+  it('hapus akun menerima konfirmasi "DELETE" (K-26)', async () => {
+    const { status, body } = await minta(app, db, '/account', {
+      method: 'DELETE',
+      userId: USER_A,
+      body: { konfirmasi: 'DELETE' },
+    });
+    expect(status).toBe(200);
+    expect(body.data).toEqual({ deleted: true, email: 'a@contoh.id' });
+    expect(db.baris('users').some((r) => r.id === USER_A)).toBe(false);
+    expect(db.baris('users').some((r) => r.id === USER_B)).toBe(true);
   });
 });
 
@@ -685,10 +731,10 @@ describe('audit query kepemilikan', () => {
 });
 
 // ------------------------------------------------------------------
-// Paginasi offset + auth
+// Paginasi cursor + auth (K-32)
 // ------------------------------------------------------------------
 
-describe('paginasi offset', () => {
+describe('paginasi cursor', () => {
   function seedBanyak(): Seed {
     const seed = seedAwal();
     seed.health_checks = Array.from({ length: 25 }, (_, i) => ({
@@ -704,31 +750,48 @@ describe('paginasi offset', () => {
     return seed;
   }
 
-  it('tiga halaman offset tanpa duplikat dan tanpa ada yang terlewat', async () => {
+  it('tiga halaman cursor tanpa duplikat dan tanpa ada yang terlewat', async () => {
     db = new FakeD1(seedBanyak());
     app = buatApp(db);
     const semuaId: string[] = [];
-    const halaman1 = await minta(app, db, '/health-checks?limit=10&offset=0', { userId: USER_A });
+    const halaman1 = await minta(app, db, '/health-checks?limit=10', { userId: USER_A });
     expect(halaman1.status).toBe(200);
     expect((halaman1.body.data as any[])).toHaveLength(10);
-    expect(halaman1.body.meta.pagination).toEqual({ limit: 10, offset: 0, total: 25, has_more: true });
+    expect(halaman1.body.meta.pagination).toEqual({
+      limit: 10,
+      next_cursor: expect.any(String),
+      has_more: true,
+    });
     semuaId.push(...(halaman1.body.data as any[]).map((r) => r.id));
-    const halaman2 = await minta(app, db, '/health-checks?limit=10&offset=10', { userId: USER_A });
+    const cursor2 = halaman1.body.meta.pagination.next_cursor as string;
+    const halaman2 = await minta(app, db, `/health-checks?limit=10&cursor=${encodeURIComponent(cursor2)}`, {
+      userId: USER_A,
+    });
     expect((halaman2.body.data as any[])).toHaveLength(10);
     expect(halaman2.body.meta.pagination.has_more).toBe(true);
     semuaId.push(...(halaman2.body.data as any[]).map((r) => r.id));
-    const halaman3 = await minta(app, db, '/health-checks?limit=10&offset=20', { userId: USER_A });
+    const cursor3 = halaman2.body.meta.pagination.next_cursor as string;
+    const halaman3 = await minta(app, db, `/health-checks?limit=10&cursor=${encodeURIComponent(cursor3)}`, {
+      userId: USER_A,
+    });
     expect((halaman3.body.data as any[])).toHaveLength(5);
-    expect(halaman3.body.meta.pagination).toEqual({ limit: 10, offset: 20, total: 25, has_more: false });
+    expect(halaman3.body.meta.pagination).toEqual({
+      limit: 10,
+      next_cursor: null,
+      has_more: false,
+    });
     semuaId.push(...(halaman3.body.data as any[]).map((r) => r.id));
     expect(new Set(semuaId).size).toBe(25);
   });
 
-  it('limit bukan angka dan offset negatif mengembalikan 400', async () => {
+  it('limit bukan angka dan cursor cacat mengembalikan 400', async () => {
     const { status: s1 } = await minta(app, db, '/health-checks?limit=abc', { userId: USER_A });
     expect(s1).toBe(400);
-    const { status: s2 } = await minta(app, db, '/health-checks?offset=-1', { userId: USER_A });
+    const { status: s2, body: b2 } = await minta(app, db, '/health-checks?cursor=bukan-cursor!!!', {
+      userId: USER_A,
+    });
     expect(s2).toBe(400);
+    expect(b2.error?.code).toBe('VALIDATION_ERROR');
   });
 
   it('limit di luar batas diklem, bukan galat', async () => {

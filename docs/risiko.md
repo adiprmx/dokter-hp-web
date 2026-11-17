@@ -191,24 +191,29 @@ Matriks lengkap ada di bagian 3.
 
 - **Deskripsi:** Kunci API Gemini yang disimpan sebagai secret
   Worker ternyata tidak valid, dicabut, atau kedaluwarsa.
-  Catatan di `ARCHITECTURE.md`: validitas kunci lama
-  (22 Oktober 2026, di file lokal) belum terkonfirmasi.
-  Bila kunci tidak valid, seluruh fitur Diagnosis AI gagal.
-- **Kemungkinan: Sedang.** Kunci lama belum terkonfirmasi
-  validitasnya; kunci API juga bisa dicabut vendor atau
-  kedaluwarsa bila tidak dipakai lama.
-- **Dampak: Sedang.** Hanya fitur Diagnosis AI yang mati;
-  fitur lain (tes WiFi, riwayat, dashboard) tetap berjalan.
-  Pengguna melihat pesan jujur "Diagnosis AI sedang tidak
-  tersedia", bukan jawaban karangan.
+  Kunci sudah TERVERIFIKASI valid 17 November 2026 22:13 WIB
+  (K-20): panggilan uji mengembalikan HTTP 200 dengan 50 model
+  terdaftar — sehingga sisa risikonya adalah pencabutan atau
+  kedaluwarsa di masa depan, bukan validitas yang belum
+  terkonfirmasi. Bila kunci tidak valid, fitur Diagnosis AI
+  memakai jawaban aturan berlabel saran (K-23), bukan mati total.
+- **Kemungkinan: Rendah.** Kunci terverifikasi valid 17 November
+  2026; pencabutan atau kedaluwarsa mendadak jarang terjadi dan
+  terpantau lewat panggilan tes mingguan.
+- **Dampak: Sedang.** Hanya jawaban AI yang diganti jawaban
+  aturan berlabel saran (K-23); fitur lain (tes WiFi, riwayat,
+  dashboard) tetap berjalan. Pengguna tidak pernah melihat
+  jawaban karangan.
 - **Mitigasi yang sudah dirancang:**
   - Kunci hanya di secret Worker, tidak di repo dan tidak di
     browser — kecil kemungkinan bocor dan dicabut karena
     penyalahgunaan pihak lain.
   - Rate limit 20 diagnosis per hari per pengguna melindungi
     kuota bersama.
-  - Bila Gemini galat, Worker mengembalikan pesan jujur, bukan
-    jawaban karangan.
+  - Bila Gemini galat, Worker memakai jawaban aturan berlabel
+    saran (K-23) dan mencatat kejadian ke log server
+    (`GEMINI_KUOTA_HABIS` bila kedua model 429), bukan jawaban
+    karangan dan bukan pesan "tidak tersedia".
 - **Rencana darurat bila terjadi:**
   1. Uji kunci dari Worker (panggilan tes kecil); bila gagal,
      buat kunci baru di Google AI Studio (gratis) dan atur
@@ -727,8 +732,8 @@ ditandai tebal.
 | Kemungkinan \ Dampak | Rendah | Sedang | Tinggi | Kritis |
 |---|---|---|---|---|
 | **Tinggi** | — | **R13** (EPERM sandbox) | — | — |
-| **Sedang** | — | R06 (kunci Gemini), R09 (deploy gagal), R20 (mirror divergen) | R01 (kuota D1), R02 (kuota Workers), R05 (satu akun Cloudflare), R07 (Google OAuth), R12 (harga/limit vendor), R14 (owner kehilangan akses), R15 (kebocoran secret), R16 (banjir request), R19 (migrasi D1) | **R10** (kebocoran data antar-user), **R11** (brute force PIN — dampak tinggi, lihat catatan) |
-| **Rendah** | — | R03 (kuota KV) | R17 (Worker mati total), R18 (sesi dicuri) | **R04** (akun Cloudflare bermasalah), **R08** (D1 kehilangan data) |
+| **Sedang** | — | R09 (deploy gagal), R20 (mirror divergen) | R01 (kuota D1), R02 (kuota Workers), R05 (satu akun Cloudflare), R07 (Google OAuth), R12 (harga/limit vendor), R14 (owner kehilangan akses), R15 (kebocoran secret), R16 (banjir request), R19 (migrasi D1) | **R10** (kebocoran data antar-user), **R11** (brute force PIN — dampak tinggi, lihat catatan) |
+| **Rendah** | — | R03 (kuota KV), R06 (kunci Gemini) | R17 (Worker mati total), R18 (sesi dicuri) | **R04** (akun Cloudflare bermasalah), **R08** (D1 kehilangan data) |
 
 Catatan: R11 (brute force PIN) dinilai dampak Tinggi, bukan
 Kritis, karena serangannya menargetkan satu akun per satu akun
@@ -748,8 +753,8 @@ yang bisa membocorkan banyak akun sekaligus lewat satu bug.
 | 7 | R02 | Sedang × Tinggi; penilaian belum tajam karena angka limit Workers belum dicatat |
 | 8 | R11 | Sedang × Tinggi; mitigasi kunci 30 detik sudah dirancang |
 | 9 | R17, R18 | Rendah × Tinggi |
-| 10 | R06, R09, R13, R20 | Sedang × Sedang; mengganggu tetapi tidak melumpuhkan |
-| 11 | R03 | Rendah × Sedang |
+| 10 | R09, R13, R20 | Sedang × Sedang; mengganggu tetapi tidak melumpuhkan |
+| 11 | R03, R06 | Rendah × Sedang |
 
 ---
 
@@ -814,11 +819,12 @@ karena kondisinya bisa berubah cepat tanpa peringatan.
 ### 4.5 R06 — Kunci Gemini tidak valid atau kedaluwarsa
 
 - **Yang dipantau tiap minggu:** hasil panggilan tes Gemini
-  dari Worker (satu panggilan kecil tiap minggu); status kunci
-  lama (22 Oktober 2026) — sudah terkonfirmasi valid atau
-  sudah diganti.
-- **Tanda bahaya:** panggilan tes gagal; kunci lama masih belum
-  terkonfirmasi; ada pesan dari Google tentang kunci atau kuota.
+  dari Worker (satu panggilan kecil tiap minggu); kunci
+  terverifikasi valid 17 November 2026 22:13 WIB (K-20) — yang
+  dipantau sekarang adalah pencabutan/kedaluwarsa mendadak.
+- **Tanda bahaya:** panggilan tes gagal; ada pesan dari Google
+  tentang kunci atau kuota; log server mencatat
+  `GEMINI_KUOTA_HABIS` berulang.
 - **Tindakan bila tanda bahaya muncul:** buat kunci baru di
   Google AI Studio dan perbarui secret Worker; uji Diagnosis AI
   end-to-end setelah penggantian.
@@ -836,7 +842,7 @@ dengan alasan tercatat.
 |---|---|---|---|
 | 1 | Belum ada jadwal cadangan D1 berkala | R08 | Terbuka — tetapkan sebelum rilis |
 | 2 | Angka limit Workers free tier belum dicatat | R02 | Terbuka — verifikasi dari dokumentasi/dashboard Cloudflare |
-| 3 | Validitas kunci Gemini lama (22 Okt 2026) belum terkonfirmasi | R06 | Terbuka — uji sebelum rilis |
+| 3 | Validitas kunci Gemini lama (22 Okt 2026) belum terkonfirmasi | R06 | **Tertutup 18 November 2026 (Wave 3b)** — kunci terverifikasi valid 17 Nov 22:13 WIB (HTTP 200, 50 model, K-20) |
 | 4 | Belum ada akun Cloudflare cadangan yang siap | R04, R05 | Terbuka — siapkan dan uji deploy ke akun kedua |
 | 5 | Daftar akun kunci + jalur pemulihan belum dicatat | R14 | Terbuka — catat tanpa kata sandi |
 | 6 | Client ID Google OAuth belum dibuat; status verifikasi consent screen belum diketahui | R07 | Terbuka — buat dan ajukan verifikasi lebih awal |
@@ -845,6 +851,16 @@ dengan alasan tercatat.
 ---
 
 ## 6. Changelog dokumen
+
+### 18 November 2026 — Wave 3b (Tim Integrasi)
+
+- R06 (kunci Gemini): kemungkinan Sedang → **Rendah** setelah
+  kunci terverifikasi valid 17 November 2026 22:13 WIB
+  (HTTP 200, 50 model — K-20). R06 pindah di matriks
+  (Sedang×Sedang → Rendah×Sedang) dan peta prioritas
+  (prioritas 10 → 11, bersama R03); celah mitigasi #3 ditutup.
+  Dampak tetap Sedang; fallback AI kini jawaban aturan
+  berlabel saran (K-23), bukan pesan "tidak tersedia".
 
 ### 17 November 2026 — versi awal
 

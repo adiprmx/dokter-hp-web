@@ -11,7 +11,9 @@
 //
 // Sesi memakai cookie HttpOnly dari server; frontend tidak pernah
 // menyimpan token di localStorage atau sessionStorage. Semua panggilan
-// API memakai credentials: "include" agar cookie ikut terkirim.
+// API memakai lib/api.ts (credentials: "include" + ApiError bertipe).
+
+import { basisApi } from "./api";
 
 /** Panjang PIN minimum dan maksimum (digit), sesuai kontrak API. */
 export const PIN_MIN_DIGIT = 4;
@@ -182,7 +184,7 @@ export function pesanGalatMasuk(nilai: string | null): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// URL mulai masuk Google + pemanggil API bertanda tangan sesi.
+// URL mulai masuk Google.
 // ---------------------------------------------------------------------------
 
 /**
@@ -202,16 +204,6 @@ export function validasiRedirect(tujuan: string | null | undefined): string {
 }
 
 /**
- * Basis URL API. Mengikuti apps/web/src/lib/api.ts: VITE_API_URL diisi
- * saat deploy bila API berada di domain berbeda; kosong berarti memakai
- * jalur relatif /api (proxy Vite saat dev, atau route Pages saat produksi).
- */
-export function basisApi(): string {
-  const url = import.meta.env.VITE_API_URL as string | undefined;
-  return (url ?? "").replace(/\/$/, "");
-}
-
-/**
  * URL untuk memulai masuk Google (dipakai lewat navigasi browser penuh,
  * bukan fetch, karena responsnya redirect 302 ke Google).
  */
@@ -228,61 +220,4 @@ export interface InfoPengguna {
   pin_diatur: boolean;
   sesi_terkunci: boolean;
   sesi_kedaluwarsa_pada: string;
-}
-
-/**
- * Galat dari API: membawa status HTTP, kode galat mesin, dan badan
- * respons mentah (untuk diurai pemilah PIN_TERKUNCI / PIN_SALAH).
- * Kegagalan jaringan (fetch melempar) BUKAN GalatApi — pemanggil
- * membedakannya dengan `instanceof GalatApi`.
- */
-export class GalatApi extends Error {
-  readonly status: number;
-  readonly kode: string | null;
-  readonly badan: unknown;
-
-  constructor(
-    status: number,
-    kode: string | null,
-    pesan: string,
-    badan: unknown,
-  ) {
-    super(pesan);
-    this.name = "GalatApi";
-    this.status = status;
-    this.kode = kode;
-    this.badan = badan;
-  }
-}
-
-/**
- * Memanggil endpoint API dan mengembalikan isi `data` dari envelope
- * sukses. Cookie sesi ikut terkirim (credentials: "include").
- * Bila respons gagal, melempar GalatApi. Bila jaringan gagal, fetch
- * melempar seperti biasa (TypeError).
- *
- * Catatan: fetchJson di lib/api.ts tidak dipakai di sini karena ia tidak
- * mengirim credentials dan tidak meneruskan badan galat (kode + rincian)
- * yang dibutuhkan layar PIN.
- */
-export async function panggilApi<T>(
-  path: string,
-  opsi?: { method?: "GET" | "POST" | "PATCH" | "DELETE"; body?: unknown },
-): Promise<T> {
-  const res = await fetch(`${basisApi()}${path}`, {
-    method: opsi?.method ?? "GET",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: opsi?.body === undefined ? undefined : JSON.stringify(opsi.body),
-  });
-  const isi: unknown = await res.json().catch(() => null);
-  if (!res.ok) {
-    throw new GalatApi(
-      res.status,
-      kodeGalatApi(isi),
-      pesanGalatApi(isi) ?? PESAN_GALAT_UMUM,
-      isi,
-    );
-  }
-  return (isi as { data?: T } | null)?.data as T;
 }

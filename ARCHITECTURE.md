@@ -175,10 +175,16 @@ Basis URL: `https://api.dokter-hp.<domain>` (Worker; domain persis
 diputuskan saat deploy — memakai subdomain Workers
 `<nama>.workers.dev` atau custom domain bila tersedia).
 
-Total **27 endpoint** (K-01, K-07): Auth 7, health checks 4,
-WiFi 5, AI 2, akun 6, utilitas 3. Semua path memakai awalan
-`/api` — Worker me-mount router di `/api`
-(`apps/api/src/index.ts`).
+Total **29 endpoint bernomor** (K-01, K-07, K-33, K-43): Auth 7,
+health checks 4, WiFi 6, AI 2, akun 6, utilitas 3, riwayat
+gabungan 1. Semua path memakai awalan `/api` — Worker me-mount
+router di `/api` (`apps/api/src/index.ts`).
+
+Catatan hitungan: total rute method+path yang benar-benar ada
+adalah 30 — `DELETE /api/history/:jenis/:id` (§3.7) adalah
+operasi pendamping tanpa nomor tersendiri (lihat
+`docs/api-contracts.md` §10 poin 5; menunggu keputusan
+koordinator).
 
 Semua respons memakai envelope JSON standar:
 
@@ -216,7 +222,7 @@ dipanggil: `GET /api/auth/me`, `POST /api/auth/pin/set`,
 
 | Method | Path | Auth | Request | Response |
 |---|---|---|---|---|
-| GET | `/api/health-checks` | 🔒 | `?limit=20&offset=0` | Daftar milik pengguna (filter `deleted_at IS NULL`), terbaru dulu |
+| GET | `/api/health-checks` | 🔒 | `?limit=20&cursor=...` | Daftar milik pengguna (filter `deleted_at IS NULL`), terbaru dulu; paginasi cursor keyset (K-32) |
 | GET | `/api/health-checks/:id` | 🔒 | — | Satu pemeriksaan milik pengguna |
 | POST | `/api/health-checks` | 🔒 | `{ "skor": 0-100, "ringkasan": {...} }` | Baris baru (`sync_status: "synced"`) |
 | DELETE | `/api/health-checks/:id` | 🔒 | — | Soft-delete (`deleted_at` diisi) |
@@ -225,10 +231,11 @@ dipanggil: `GET /api/auth/me`, `POST /api/auth/pin/set`,
 
 | Method | Path | Auth | Request | Response |
 |---|---|---|---|---|
-| GET | `/api/wifi-reports` | 🔒 | `?limit=20&offset=0` | Daftar milik pengguna, terbaru dulu |
+| GET | `/api/wifi-reports` | 🔒 | `?limit=20&cursor=...` | Daftar milik pengguna, terbaru dulu; paginasi cursor keyset (K-32) |
 | GET | `/api/wifi-reports/:id` | 🔒 | — | Satu laporan + sampel tes bertahan bila ada |
 | POST | `/api/wifi-reports` | 🔒 | `{ "ssid", "kecepatan_koneksi_mbps", "kekuatan_sinyal", "channel", "dns", "ping_ms", "rekomendasi", "kecepatan_unduh_kbps", "sumber", "durasi_tes_detik" }` | Baris baru |
 | POST | `/api/wifi-reports/:id/samples` | 🔒 | `{ "samples": [{ "detik_ke": 0-29, "kecepatan_kbps": n }] }` | Sampel tersimpan (maks 30 per laporan) |
+| GET | `/api/wifi-reports/:id/samples` | 🔒 | — | Daftar sampel tes bertahan satu laporan, urut `detik_ke` menaik; tanpa paginasi (maks 30) |
 | DELETE | `/api/wifi-reports/:id` | 🔒 | — | Soft-delete (kolom `deleted_at` — lihat bagian 5) |
 
 Catatan: tes tanpa akun (landing) tidak memanggil endpoint ini —
@@ -239,11 +246,16 @@ hasilnya hanya tampil di layar dan tidak tersimpan.
 | Method | Path | Auth | Request | Response |
 |---|---|---|---|---|
 | POST | `/api/ai/diagnose` | 🔒 | `{ "pertanyaan": "...", "health_check_id": "..." (opsional) }` | Objek diagnosis lengkap (`id`, `pertanyaan`, `jawaban`, `dibuat_pada`), tersimpan ke `ai_diagnoses` |
-| GET | `/api/ai/diagnoses` | 🔒 | `?limit=20&offset=0` | Riwayat tanya jawab milik pengguna |
+| GET | `/api/ai/diagnoses` | 🔒 | `?limit=20&cursor=...` | Riwayat tanya jawab milik pengguna; paginasi cursor keyset (K-38) |
 
 Worker merakit konteks dari riwayat pengguna (pemeriksaan terakhir +
 laporan WiFi terakhir) dan mengirimnya bersama pertanyaan ke Gemini.
-Kunci Gemini hanya di secret Worker.
+Kunci Gemini hanya di secret Worker. Alias lama
+`POST /api/ai/tanya` + `GET /api/ai/riwayat` tetap hidup;
+path tanpa awalan `/api` dihapus (K-37). Diagnosis selalu
+mengembalikan 200 bila pertanyaan valid (K-23): saat Gemini
+gagal, Worker memakai jawaban aturan berlabel saran (tidak
+tersimpan, tidak memotong kuota).
 
 ### 3.5 Akun
 
@@ -253,8 +265,8 @@ Kunci Gemini hanya di secret Worker.
 | PATCH | `/api/account/profile` | 🔒 | `{ "nama": "..." }` | Profil diperbarui |
 | GET | `/api/account/sessions` | 🔒 | — | Daftar sesi aktif milik pengguna |
 | DELETE | `/api/account/sessions/:id` | 🔒 | — | Keluar dari sesi itu |
-| DELETE | `/api/account` | 🔒 | `{ "konfirmasi": "HAPUS" }` | Hapus akun + seluruh data (cascade) |
-| GET | `/api/account/export` | 🔒 | — | Unduhan file JSON seluruh data pengguna (profil, health checks, laporan WiFi + sampel, diagnosis AI); maks 5.000 baris per tabel (K-04), rate limit 5/hari |
+| DELETE | `/api/account` | 🔒 | `{ "konfirmasi": "HAPUS" }` atau `{ "konfirmasi": "DELETE" }` | Hapus akun + seluruh data, dihapus eksplisit per tabel (K-26) |
+| GET | `/api/account/export` | 🔒 | — | Unduhan file JSON seluruh data pengguna (profil, health checks, laporan WiFi + sampel, diagnosis AI); maks 5.000 baris per tabel + 30.000 sampel (K-04), rate limit 5/hari via tabel D1 `rate_limits` (429 `RATE_LIMITED`, K-42/K-59) |
 
 ### 3.6 Utilitas (publik)
 
@@ -262,7 +274,20 @@ Kunci Gemini hanya di secret Worker.
 |---|---|---|---|---|
 | GET | `/api/health` | Publik | — | `{ "status": "ok" }` (liveness, tanpa akses D1) |
 | GET | `/api/ping` | Publik | — | `{ "ok": true, "t": <ms> }` — target latensi HTTP; respons kecil, tanpa akses D1 |
-| GET | `/api/speedtest/info` | Publik | — | `{ "file": "/speedtest-1mb.bin", "ukuran_byte": 1048576, "ukuran_label": "1 MB", "timeout_detik": 15, "tes_bertahan_detik": 30 }` (tanpa akses D1) |
+| GET | `/api/speedtest/info` | Publik | — | `{ "file": "/speedtest-1mb.bin", "ukuran_byte": 1048576, "ukuran_label": "1 MB", "timeout_detik": 15, "tes_bertahan_detik": 30, "ip_publik": "<CF-Connecting-IP atau null>" }` (tanpa akses D1) |
+
+### 3.7 Riwayat gabungan
+
+| Method | Path | Auth | Request | Response |
+|---|---|---|---|---|
+| GET | `/api/history` | 🔒 | `?jenis=kesehatan\|wifi\|ai\|semua&limit=20&cursor=...` | Tiga jenis data digabung, terbaru dulu; tiap item `{ "jenis", "id", "dibuat_pada", "data" }` dengan proyeksi ringkas per jenis |
+| DELETE | `/api/history/:jenis/:id` | 🔒 | — | Hapus satu entri: soft-delete untuk `kesehatan`/`wifi`, hapus permanen untuk `ai` (operasi pendamping tanpa nomor, lihat catatan hitungan di atas) |
+
+Halaman Riwayat memanggil `GET /api/history` satu kali
+(100 entri terbaru) dan memetakan item ke daftar; paginasi
+cursor berlaku pada urutan gabungan (tiap jenis diambil
+`limit + 1` dengan klausa cursor yang sama, lalu digabung
+dan dipotong ke `limit`).
 
 ## 4. Alur
 
@@ -558,8 +583,9 @@ bagian 5) — Workers free tier tidak menyediakan rate limiting
 per-pengguna bawaan. KV TIDAK dipakai untuk rate limit sesi/tulis
 karena writes KV hanya 1.000/hari.
 
-Respons saat kena batas: HTTP 429 dengan envelope galat standar
-dan pesan bahasa sehari-hari ("Terlalu sering, coba lagi sebentar").
+Respons saat kena batas: HTTP 429 kode `RATE_LIMITED` (K-59)
+dengan envelope galat standar, header `Retry-After`, dan pesan
+bahasa sehari-hari ("Terlalu sering, coba lagi sebentar").
 
 ### 6.2 Keamanan
 
@@ -571,8 +597,11 @@ dan pesan bahasa sehari-hari ("Terlalu sering, coba lagi sebentar").
   terikat (`?`); tidak ada string query yang dirakit dari input.
 - **XSS**: React meng-escape output secara default; jawaban AI
   ditampilkan sebagai teks (tanpa `dangerouslySetInnerHTML`).
-- **CSRF**: cookie SameSite=Lax + pemeriksaan header `Origin`
-  pada endpoint tulis (hanya origin Pages dan Vercel yang diizinkan).
+- **CSRF**: cookie sesi `SameSite=None; Secure` (K-50) +
+  pemeriksaan header `Origin` pada endpoint mutasi: Origin ada
+  dan bukan `ALLOWED_ORIGIN` → 403. Cookie OAuth (state,
+  verifier, redirect) sengaja `SameSite=Lax` karena hanya
+  dipakai redirect di domain API sendiri.
 - **CORS**: hanya dua origin frontend (Pages + Vercel) yang
   diizinkan, dengan `credentials: true`. Tidak ada wildcard `*`.
 - **Header keamanan** (di Worker dan di Pages/Vercel):
@@ -640,9 +669,11 @@ Aturan:
    yang sudah ada atau akun baru) — diputuskan koordinator.
 3. **Client ID Google OAuth**: perlu dibuat di Google Cloud Console
    (gratis, tanpa kartu) dengan redirect URI ke Worker callback.
-4. **Kunci Gemini**: secret `GEMINI_API_KEY` perlu disiapkan dan
-   diatur sebagai secret Worker; validitas kunci lama (22 Oktober
-   2026, di file lokal) belum terkonfirmasi.
+4. **Kunci Gemini**: secret `GEMINI_API_KEY` perlu diatur sebagai
+   secret Worker; kunci sudah TERVERIFIKASI valid 17 November 2026
+   22:13 WIB (HTTP 200, 50 model terdaftar — K-20). Yang masih
+   terbuka hanya penempatan secret-nya di Worker, bukan validitas
+   kunci.
 5. **Sinkron APK**: endpoint sinkron APK → D1 adalah fase berikutnya
    dan butuh perubahan di APK.
 
@@ -693,14 +724,47 @@ terkait, bukan diubah di sini):
 
 - `docs/api-contracts.md` masih menulis semua path tanpa awalan
   `/api` — perlu penyesuaian ke K-07 oleh tim kontrak API.
+  **Selesai di Wave 3b (18 November 2026):** semua path di
+  kontrak kini memakai awalan `/api`.
 - `docs/api-contracts.md` §5 masih mengembalikan 502
   `AI_TIDAK_TERSEDIA` saat Gemini gagal, sementara K-06
   mewajibkan fallback diagnosis tanpa AI — perlu diputuskan
   bagaimana fallback dan kode 502 hidup berdampingan.
+  **Selesai di Wave 3b:** 502 pensiun (K-23); diagnosis selalu
+  200 dengan fallback aturan berlabel saran.
 - `apps/api/src/routes/api.ts` (scaffold) memakai stub
   `/ai-diagnoses/*`, sementara kontrak memakai `/ai/diagnose`
   dan `/ai/diagnoses`; stub `/health` mengembalikan `{ok: true}`
   tanpa envelope standar.
+  **Selesai di Wave 3b:** stub 501 dihapus; router auth/data/AI
+  terpasang; `/health` dan `/ping` memakai envelope (K-24).
 - `PRODUCT.md` §4.4 menyebut alamat IP publik "dari Worker",
   tetapi tidak ada endpoint di kontrak yang mengembalikan IP
   publik — perlu diputuskan sumbernya.
+  **Selesai di Wave 3b:** `GET /api/speedtest/info`
+  mengembalikan `ip_publik` dari header `CF-Connecting-IP`
+  (K-25).
+
+## 11. Changelog Wave 3b (Tim Integrasi, 18 November 2026)
+
+- Total endpoint 27 → **29 bernomor** (K-33, K-43): tambah
+  `GET /api/history` (§3.7) dan `GET
+  /api/wifi-reports/:id/samples` (§3.3); `DELETE
+  /api/history/:jenis/:id` adalah operasi pendamping tanpa nomor
+  (total rute method+path yang benar-benar ada: 30 — menunggu
+  keputusan koordinator, lihat `docs/api-contracts.md` §10
+  poin 5).
+- Paginasi cursor keyset di semua endpoint daftar (K-32, K-38);
+  query `offset` dihapus dari tabel §3.2–§3.4.
+- AI: alias `/api/ai/tanya` + `/api/ai/riwayat`, path tanpa
+  `/api` dihapus (K-37); diagnosis selalu 200 (K-23).
+- Akun: hapus akun terima `HAPUS` atau `DELETE` (K-26);
+  penghapusan eksplisit per tabel (bukan cascade); ekspor
+  tambah batas 30.000 sampel + kode 429 `RATE_LIMITED`
+  (K-42/K-59).
+- Utilitas: `GET /api/speedtest/info` tambah field `ip_publik`
+  (K-25).
+- §9 poin 4 (kunci Gemini) diperbarui: kunci terverifikasi
+  valid 17 November 2026 22:13 WIB (K-20); tinggal penempatan
+  secret di Worker.
+- Keempat inkonsistensi di §10 ditutup (lihat catatan di atas).

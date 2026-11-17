@@ -816,29 +816,22 @@ export function pesanGalatHapus(error: unknown): string {
 // Pemanggil API (/api/health-checks)
 //
 // Kontrak API (docs/api-contracts.md 3) tidak menyediakan filter
-// per jenis di server — GET hanya mendukung limit/offset — jadi
+// per jenis di server — GET hanya mendukung limit/cursor — jadi
 // penyaringan per jenis dilakukan di sisi client lewat
 // uraiEntriDokter. Diambil 100 baris terbaru; cukup untuk riwayat
 // catatan manual. Cookie sesi dikirim lewat credentials: "include"
-// (kontrak 0.4); fetchJson meneruskan init ke fetch.
+// (kontrak 0.4; sudah bawaan lib/api.ts).
 // ------------------------------------------------------------------
-
-interface Envelope<T> {
-  success: boolean;
-  data: T;
-  meta?: Record<string, unknown>;
-}
 
 const BATAS_AMBIL_RIWAYAT = 100;
 
 export async function ambilRiwayatDokter(
   jenis: DoctorKind,
 ): Promise<DoctorEntry[]> {
-  const respons = await fetchJson<Envelope<unknown>>(
+  const respons = await fetchJson<unknown[]>(
     `/api/health-checks?limit=${BATAS_AMBIL_RIWAYAT}`,
-    { credentials: "include" },
   );
-  if (!respons || respons.success !== true || !Array.isArray(respons.data)) {
+  if (!Array.isArray(respons.data)) {
     throw new Error("Format data tidak dikenali.");
   }
   const hasil: DoctorEntry[] = [];
@@ -853,22 +846,18 @@ export async function simpanEntriDokter(
   jenis: DoctorKind,
   bodi: BodiEntriDokter,
 ): Promise<DoctorEntry> {
-  const respons = await fetchJson<Envelope<unknown>>("/api/health-checks", {
+  const respons = await fetchJson<unknown>("/api/health-checks", {
     method: "POST",
-    body: JSON.stringify(bodi),
-    credentials: "include",
+    body: bodi,
   });
-  if (!respons || respons.success !== true) {
-    throw new Error("Format data tidak dikenali.");
-  }
   const entri = uraiEntriDokter(jenis, respons.data);
   if (!entri) throw new Error("Format data tidak dikenali.");
   return entri;
 }
 
 export async function hapusEntriDokter(id: string): Promise<void> {
-  await fetchJson<Envelope<unknown>>(
+  await fetchJson<unknown>(
     `/api/health-checks/${encodeURIComponent(id)}`,
-    { method: "DELETE", credentials: "include" },
+    { method: "DELETE" },
   );
 }

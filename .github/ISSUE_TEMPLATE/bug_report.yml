@@ -1,0 +1,137 @@
+name: Laporan bug
+description: Laporkan masalah yang ditemukan saat memakai Dokter HP Web App
+title: "[Bug] "
+labels: ["bug"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Terima kasih sudah meluangkan waktu untuk melaporkan masalah.
+        Mohon isi formulir ini selengkap mungkin agar masalahnya bisa
+        direproduksi dan diperbaiki.
+
+        **Penting:** jangan sertakan data pribadi apa pun (email, nomor HP,
+        alamat, kata sandi, atau PIN) di laporan ini. Laporan issue bersifat
+        publik dan bisa dibaca siapa saja.
+
+  - type: textarea
+    id: masalah
+    attributes:
+      label: Masalahnya apa
+      description: Jelaskan dengan singkat apa yang terjadi.
+      placeholder: "Contoh: Tes WiFi berhenti di tengah jalan dan tidak menampilkan hasil."
+      value: ""
+    validations:
+      required: true
+
+  - type: textarea
+    id: langkah
+    attributes:
+      label: Langkah yang dilakukan
+      description: Tulis langkah demi langkah agar masalahnya bisa direproduksi.
+      placeholder: |
+        1. Buka halaman Dokter WiFi.
+        2. Ketuk tombol Periksa WiFi sekarang.
+        3. Lalu terjadi ...
+      value: ""
+    validations:
+      required: true
+
+  - type: textarea
+    id: harapan
+    attributes:
+      label: Yang seharusnya terjadi
+      description: Jelaskan apa yang Anda harapkan terjadi.
+      placeholder: "Contoh: Hasil tes kecepatan tampil beserta rekomendasi perbaikan."
+      value: ""
+    validations:
+      required: true
+
+  - type: textarea
+    id: kenyataan
+    attributes:
+      label: Yang benar-benar terjadi
+      description: Jelaskan apa yang benar-benar terjadi, termasuk pesan galat yang tampil bila ada.
+      placeholder: "Contoh: Layar berhenti di tahap pengukuran dan tidak ada hasil yang tampil."
+      value: ""
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area yang bermasalah
+      description: Pilih bagian aplikasi tempat masalah terjadi.
+      options:
+        - Dokter WiFi (tes kecepatan, latensi, tes bertahan 30 detik)
+        - Dashboard (skor kesehatan, grafik riwayat)
+        - Diagnosis AI
+        - Masuk, akun, atau PIN
+        - Riwayat atau laporan PDF
+        - Pengaturan akun
+        - Tampilan umum / navigasi
+        - Lainnya
+    validations:
+      required: true
+
+  - type: input
+    id: perangkat
+    attributes:
+      label: Perangkat
+      description: Merek dan model HP atau perangkat yang dipakai.
+      placeholder: "Contoh: Redmi Note 12"
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser dan versi
+      description: Browser beserta versinya, dan sistem operasi bila diketahui.
+      placeholder: "Contoh: Chrome 131 di Android 14"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: koneksi
+    attributes:
+      label: Koneksi saat masalah terjadi
+      description: Jenis koneksi yang dipakai saat masalah terjadi.
+      options:
+        - WiFi
+        - Data seluler
+        - Tidak berkaitan dengan koneksi
+        - Tidak tahu
+    validations:
+      required: false
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log atau pesan galat (bila ada)
+      description: Tempel pesan galat atau potongan log yang relevan. Hapus data pribadi sebelum menempel.
+      render: shell
+      placeholder: Tempel pesan galat di sini.
+      value: ""
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Tangkapan layar (bila ada)
+      description: Seret dan letakkan gambar di kolom ini bila membantu menjelaskan. Pastikan tidak ada data pribadi di gambar.
+      value: ""
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: konfirmasi
+    attributes:
+      label: Konfirmasi
+      options:
+        - label: Saya sudah memeriksa daftar issue yang ada dan laporan ini belum pernah dibuat sebelumnya.
+          required: true
+        - label: Laporan ini tidak berisi data pribadi (email, nomor HP, alamat, kata sandi, atau PIN).
+          required: true

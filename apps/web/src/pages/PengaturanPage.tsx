@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import {
   VERSI_APLIKASI_WEB,
   formatTanggalWaktu,
@@ -7,6 +8,10 @@ import {
   labelPerangkat,
   validasiNama,
 } from "../lib/akun";
+import { ApiError, basisApi, panggilApi } from "../lib/api";
+import { Button } from "../components/ui/Button";
+import { simpanBahasa, type KodeBahasa } from "../i18n";
+import { useAppStore } from "../store/useAppStore";
 
 // Halaman Pengaturan akun (/pengaturan). Wajib masuk: tanpa sesi yang
 // sah, pengguna diarahkan ke /masuk; bila sesi terkunci PIN,
@@ -16,25 +21,12 @@ import {
 // GET /api/auth/me, GET/PATCH /api/account/profile,
 // GET /api/account/sessions, DELETE /api/account/sessions/:id,
 // GET /api/account/export, DELETE /api/account, POST /auth/logout.
-
+//
 // Kata konfirmasi hapus akun bergantung bahasa aktif (kunci i18n
 // settings.deleteAccountConfirmWord: "HAPUS" untuk Indonesia,
-// "DELETE" untuk Inggris). Pemilih bahasa belum dipasang di
-// aplikasi, jadi untuk sekarang dipakai "HAPUS". Setelah tim
-// integrasi memasang i18n, ganti konstanta ini dengan kata dari
-// bahasa aktif — fungsi validasi di lib/akun.ts sudah menerima kata
-// yang diharapkan sebagai parameter, tanpa hardcode.
-// Catatan untuk koordinator: kontrak API §6.5 saat ini hanya
-// menerima "HAPUS" di sisi server; bila bahasa Inggris diaktifkan,
-// server perlu menerima "DELETE" juga (atau frontend memetakan kata
-// ke "HAPUS" sebelum mengirim).
-const KATA_KONFIRMASI_HAPUS = "HAPUS";
-
-// Basis API sama seperti lib/api.ts: VITE_API_URL bila API di domain
-// berbeda, jalur relatif /api bila tidak diisi.
-const API_URL = (
-  (import.meta.env.VITE_API_URL as string | undefined) ?? ""
-).replace(/\/$/, "");
+// "DELETE" untuk Inggris) dan dibaca lewat useTranslation — server
+// menerima keduanya (K-26). Pemilih bahasa ada di bagian Bahasa
+// halaman ini.
 
 interface Profil {
   id: string;
@@ -61,54 +53,11 @@ interface Sesi {
   kedaluwarsa_pada: string;
 }
 
-interface EnvelopeGalat {
-  success: false;
-  error: { code: string; message: string };
-}
-
-class ApiError extends Error {
-  status: number;
-  code?: string;
-
-  constructor(status: number, code: string | undefined, message: string) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
-
 function pesanDariGalat(err: unknown): string {
   if (err instanceof ApiError) {
     return err.message;
   }
   return "Terjadi kesalahan. Coba lagi.";
-}
-
-// Klien kecil khusus halaman ini: lib/api.ts (fetchJson) tidak
-// mengirim credentials: "include" yang wajib untuk cookie sesi
-// lintas origin (kontrak API §0.4), dan tidak meneruskan kode
-// galat server — keduanya dibutuhkan halaman ini (redirect saat
-// 401, pesan KONFIRMASI_SALAH). api.ts tidak diubah (di luar
-// cakupan tim ini); tim klien API diminta memperbaikinya di sana.
-async function panggilApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
-  const json = (await res.json().catch(() => null)) as
-    | { success: true; data: T }
-    | EnvelopeGalat
-    | null;
-  if (!res.ok || !json || json.success !== true) {
-    const galat = (json as EnvelopeGalat | null)?.error;
-    throw new ApiError(
-      res.status,
-      galat?.code,
-      galat?.message ?? "Terjadi kesalahan. Coba lagi.",
-    );
-  }
-  return json.data;
 }
 
 type Pesan = { jenis: "sukses" | "galat"; teks: string } | null;
@@ -132,6 +81,17 @@ function PesanStatus({ pesan }: { pesan: Pesan }) {
 
 export default function PengaturanPage() {
   const navigate = useNavigate();
+  const { t, i18n } = useTranslation();
+  const setStatusMasuk = useAppStore((s) => s.setStatusMasuk);
+  // Kata konfirmasi dari bahasa aktif (K-19): "HAPUS" (id) atau
+  // "DELETE" (en); server menerima keduanya (K-26).
+  const kataKonfirmasi = t("settings.deleteAccountConfirmWord");
+  const bahasaAktif: KodeBahasa = i18n.language === "en" ? "en" : "id";
+
+  const gantiBahasa = (bahasa: KodeBahasa) => {
+    void i18n.changeLanguage(bahasa);
+    simpanBahasa(bahasa);
+  };
   const [status, setStatus] = useState<"memuat" | "siap" | "galat">("memuat");
   const [profil, setProfil] = useState<Profil | null>(null);
   const [pinDiatur, setPinDiatur] = useState(false);
@@ -294,14 +254,14 @@ export default function PengaturanPage() {
     setMengunduhEkspor(true);
     setPesanEkspor(null);
     try {
-      const res = await fetch(`${API_URL}/api/account/export`, {
+      const res = await fetch(`${basisApi()}/api/account/export`, {
         credentials: "include",
       });
       const teks = await res.text();
       if (!res.ok) {
         let pesan = "Data tidak bisa diunduh. Coba lagi.";
         try {
-          const galat = JSON.parse(teks) as EnvelopeGalat;
+          const galat = JSON.parse(teks) as { error?: { message?: string } } | null;
           if (galat?.error?.message) {
             pesan = galat.error.message;
           }
@@ -355,10 +315,10 @@ export default function PengaturanPage() {
   const hapusAkun = async () => {
     // Pengaman ganda: tombol sudah nonaktif bila tidak cocok, tetapi
     // logika di sini tetap menolak tanpa pengecualian.
-    if (!konfirmasiHapusValid(inputHapus, KATA_KONFIRMASI_HAPUS)) {
+    if (!konfirmasiHapusValid(inputHapus, kataKonfirmasi)) {
       setPesanHapus({
         jenis: "galat",
-        teks: `Ketik ${KATA_KONFIRMASI_HAPUS} persis seperti contoh untuk melanjutkan.`,
+        teks: `Ketik ${kataKonfirmasi} persis seperti contoh untuk melanjutkan.`,
       });
       return;
     }
@@ -369,12 +329,13 @@ export default function PengaturanPage() {
         method: "DELETE",
         body: JSON.stringify({ konfirmasi: inputHapus }),
       });
+      setStatusMasuk("tidak-masuk");
       navigate("/", { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.code === "KONFIRMASI_SALAH") {
         setPesanHapus({
           jenis: "galat",
-          teks: `Ketik ${KATA_KONFIRMASI_HAPUS} persis seperti contoh untuk melanjutkan.`,
+          teks: `Ketik ${kataKonfirmasi} persis seperti contoh untuk melanjutkan.`,
         });
       } else {
         setPesanHapus({ jenis: "galat", teks: "Akun tidak bisa dihapus. Coba lagi." });
@@ -392,14 +353,15 @@ export default function PengaturanPage() {
       // Keluar bersifat idempotent: sesi yang sudah tidak ada pun
       // tetap mengarah ke halaman depan.
     }
+    setStatusMasuk("tidak-masuk");
     navigate("/", { replace: true });
   };
 
   const sesiLain = daftarSesi.filter((sesi) => !sesi.saat_ini);
-  const konfirmasiCocok = konfirmasiHapusValid(inputHapus, KATA_KONFIRMASI_HAPUS);
+  const konfirmasiCocok = konfirmasiHapusValid(inputHapus, kataKonfirmasi);
 
   return (
-    <main className="min-h-screen bg-black px-4 py-6 text-zinc-100">
+    <div className="min-h-screen bg-black px-4 py-6 text-zinc-100">
       <div className="mx-auto w-full max-w-2xl">
         <Link
           to="/dashboard"
@@ -423,13 +385,9 @@ export default function PengaturanPage() {
             <p role="alert" className="text-sm text-red-400">
               Data tidak bisa dimuat. Coba lagi.
             </p>
-            <button
-              type="button"
-              onClick={() => void muat()}
-              className="mt-4 inline-flex min-h-[48px] items-center rounded-lg bg-white px-4 text-sm font-medium text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-            >
+            <Button onClick={() => void muat()} className="mt-4">
               Coba lagi
-            </button>
+            </Button>
           </div>
         )}
 
@@ -470,13 +428,55 @@ export default function PengaturanPage() {
                   </p>
                 </div>
                 <PesanStatus pesan={pesanProfil} />
+                <Button
+                  onClick={() => void simpanNama()}
+                  loading={menyimpanNama}
+                  disabled={namaInput.trim() === profil.nama}
+                >
+                  Simpan nama
+                </Button>
+              </div>
+            </section>
+
+            {/* Bahasa */}
+            <section
+              aria-labelledby="judul-bahasa"
+              className="rounded-2xl border border-zinc-800 bg-[#121215] p-4 sm:p-6"
+            >
+              <h2 id="judul-bahasa" className="text-lg font-semibold">
+                {t("settings.languageTitle")}
+              </h2>
+              <p className="mt-2 text-sm text-zinc-400">
+                {t("settings.languageDesc")}
+              </p>
+              <div
+                role="group"
+                aria-label={t("settings.languageTitle")}
+                className="mt-4 flex gap-2"
+              >
                 <button
                   type="button"
-                  onClick={() => void simpanNama()}
-                  disabled={menyimpanNama || namaInput.trim() === profil.nama}
-                  className="inline-flex min-h-[48px] items-center rounded-lg bg-white px-4 text-sm font-medium text-black disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                  aria-pressed={bahasaAktif === "id"}
+                  onClick={() => gantiBahasa("id")}
+                  className={`inline-flex min-h-[48px] items-center rounded-lg px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                    bahasaAktif === "id"
+                      ? "bg-white text-black"
+                      : "border border-zinc-500 text-zinc-100"
+                  }`}
                 >
-                  {menyimpanNama ? "Menyimpan…" : "Simpan nama"}
+                  Indonesia
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={bahasaAktif === "en"}
+                  onClick={() => gantiBahasa("en")}
+                  className={`inline-flex min-h-[48px] items-center rounded-lg px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                    bahasaAktif === "en"
+                      ? "bg-white text-black"
+                      : "border border-zinc-500 text-zinc-100"
+                  }`}
+                >
+                  English
                 </button>
               </div>
             </section>
@@ -545,16 +545,14 @@ export default function PengaturanPage() {
                         Berlaku sampai {formatTanggalWaktu(sesi.kedaluwarsa_pada)}
                       </p>
                       {!sesi.saat_ini && (
-                        <button
-                          type="button"
+                        <Button
+                          variant="secondary"
                           onClick={() => void keluarDariSesi(sesi.id)}
-                          disabled={menghapusSesiId === sesi.id}
-                          className="mt-3 inline-flex min-h-[48px] items-center rounded-lg border border-zinc-500 px-4 text-sm font-medium text-zinc-100 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                          loading={menghapusSesiId === sesi.id}
+                          className="mt-3"
                         >
-                          {menghapusSesiId === sesi.id
-                            ? "Mengeluarkan…"
-                            : "Keluar dari sesi ini"}
-                        </button>
+                          Keluar dari sesi ini
+                        </Button>
                       )}
                     </li>
                   ))}
@@ -562,16 +560,14 @@ export default function PengaturanPage() {
               )}
               <PesanStatus pesan={pesanSesi} />
               {sesiLain.length > 0 && (
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
                   onClick={() => void keluarDariSemuaPerangkatLain()}
-                  disabled={mengeluarkanSemua}
-                  className="mt-4 inline-flex min-h-[48px] items-center rounded-lg border border-zinc-500 px-4 text-sm font-medium text-zinc-100 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  loading={mengeluarkanSemua}
+                  className="mt-4"
                 >
-                  {mengeluarkanSemua
-                    ? "Mengeluarkan…"
-                    : "Keluar dari semua perangkat lain"}
-                </button>
+                  Keluar dari semua perangkat lain
+                </Button>
               )}
             </section>
 
@@ -590,14 +586,14 @@ export default function PengaturanPage() {
                 maksimal 5 kali sehari.
               </p>
               <PesanStatus pesan={pesanEkspor} />
-              <button
-                type="button"
+              <Button
+                variant="secondary"
                 onClick={() => void unduhData()}
-                disabled={mengunduhEkspor}
-                className="mt-4 inline-flex min-h-[48px] items-center rounded-lg border border-zinc-500 px-4 text-sm font-medium text-zinc-100 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                loading={mengunduhEkspor}
+                className="mt-4"
               >
-                {mengunduhEkspor ? "Mengunduh…" : "Unduh data saya"}
-              </button>
+                Unduh data saya
+              </Button>
             </section>
 
             {/* Pengingat skor turun */}
@@ -652,13 +648,13 @@ export default function PengaturanPage() {
                 dahulu dari bagian Ekspor data di atas.
               </p>
               {!tampilKonfirmasiHapus ? (
-                <button
-                  type="button"
+                <Button
+                  variant="danger"
                   onClick={() => setTampilKonfirmasiHapus(true)}
-                  className="mt-4 inline-flex min-h-[48px] items-center rounded-lg bg-red-600 px-4 text-sm font-medium text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                  className="mt-4"
                 >
                   Hapus akun saya
-                </button>
+                </Button>
               ) : (
                 <div className="mt-4 space-y-4">
                   <div>
@@ -666,7 +662,7 @@ export default function PengaturanPage() {
                       htmlFor="konfirmasi-hapus"
                       className="block text-sm font-medium text-zinc-300"
                     >
-                      Ketik {KATA_KONFIRMASI_HAPUS} untuk mengonfirmasi
+                      Ketik {kataKonfirmasi} untuk mengonfirmasi
                     </label>
                     <input
                       id="konfirmasi-hapus"
@@ -675,7 +671,7 @@ export default function PengaturanPage() {
                       autoComplete="off"
                       autoCapitalize="characters"
                       onChange={(e) => setInputHapus(e.target.value)}
-                      placeholder={KATA_KONFIRMASI_HAPUS}
+                      placeholder={kataKonfirmasi}
                       className="mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-3 text-zinc-100 placeholder:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                     />
                     <p className="mt-1 text-sm text-zinc-400">
@@ -684,26 +680,25 @@ export default function PengaturanPage() {
                   </div>
                   <PesanStatus pesan={pesanHapus} />
                   <div className="flex flex-wrap gap-3">
-                    <button
-                      type="button"
+                    <Button
+                      variant="danger"
                       onClick={() => void hapusAkun()}
-                      disabled={!konfirmasiCocok || menghapusAkun}
-                      className="inline-flex min-h-[48px] items-center rounded-lg bg-red-600 px-4 text-sm font-medium text-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                      loading={menghapusAkun}
+                      disabled={!konfirmasiCocok}
                     >
-                      {menghapusAkun ? "Menghapus…" : "Ya, hapus akun saya"}
-                    </button>
-                    <button
-                      type="button"
+                      Ya, hapus akun saya
+                    </Button>
+                    <Button
+                      variant="secondary"
                       onClick={() => {
                         setTampilKonfirmasiHapus(false);
                         setInputHapus("");
                         setPesanHapus(null);
                       }}
                       disabled={menghapusAkun}
-                      className="inline-flex min-h-[48px] items-center rounded-lg border border-zinc-500 px-4 text-sm font-medium text-zinc-100 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                     >
                       Batal
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -764,18 +759,18 @@ export default function PengaturanPage() {
                 sudah tersimpan tetap aman dan akan terlihat lagi saat masuk
                 kembali.
               </p>
-              <button
-                type="button"
+              <Button
+                variant="secondary"
                 onClick={() => void keluar()}
-                disabled={mengeluarkan}
-                className="mt-4 inline-flex min-h-[48px] items-center rounded-lg border border-zinc-500 px-4 text-sm font-medium text-zinc-100 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                loading={mengeluarkan}
+                className="mt-4"
               >
-                {mengeluarkan ? "Keluar…" : "Keluar"}
-              </button>
+                Keluar
+              </Button>
             </section>
           </div>
         )}
       </div>
-    </main>
+    </div>
   );
 }

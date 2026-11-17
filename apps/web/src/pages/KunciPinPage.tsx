@@ -8,17 +8,17 @@ import {
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  GalatApi,
   PESAN_GALAT_UMUM,
   PESAN_PIN_TIDAK_VALID,
   PESAN_TANPA_KONEKSI,
   buatUrlMasukGoogle,
-  panggilApi,
   parseResponsKunciPin,
   parseSisaPercobaan,
   validasiFormatPin,
   type InfoPengguna,
 } from "../lib/pin";
+import { ApiError, panggilApi } from "../lib/api";
+import { Button } from "../components/ui/Button";
 
 // Layar kunci PIN (/kunci): keypad PIN 4-8 digit, verifikasi lewat
 // POST /api/auth/pin/verify, kunci 30 detik + hitung mundur setelah
@@ -74,7 +74,7 @@ export default function KunciPinPage() {
       }
       setMemuat(false);
     } catch (galat) {
-      if (galat instanceof GalatApi && galat.status === 401) {
+      if (galat instanceof ApiError && galat.status === 401) {
         setSesiHabis(true);
         setMemuat(false);
         return;
@@ -225,8 +225,8 @@ export default function KunciPinPage() {
       });
       navigate("/dashboard", { replace: true });
     } catch (galat) {
-      if (galat instanceof GalatApi) {
-        const kunci = parseResponsKunciPin(galat.badan);
+      if (galat instanceof ApiError) {
+        const kunci = parseResponsKunciPin(galat.body);
         if (kunci) {
           setSisaDetik(kunci.sisaDetik);
           setKunciSampai(Date.now() + kunci.sisaDetik * 1000);
@@ -237,8 +237,8 @@ export default function KunciPinPage() {
           setMemeriksa(false);
           return;
         }
-        if (galat.kode === "PIN_SALAH") {
-          const sisa = parseSisaPercobaan(galat.badan);
+        if (galat.code === "PIN_SALAH") {
+          const sisa = parseSisaPercobaan(galat.body);
           setPesan(
             sisa !== null
               ? `PIN salah. ${sisa} percobaan lagi sebelum terkunci sementara.`
@@ -249,8 +249,9 @@ export default function KunciPinPage() {
           setMemeriksa(false);
           return;
         }
-        if (galat.kode === "PIN_BELUM_DIATUR" || galat.kode === "CONFLICT") {
-          // PIN belum diatur: tidak ada yang perlu dibuka.
+        if (galat.code === "CONFLICT") {
+          // PIN belum diatur (409 CONFLICT, K-47): tidak ada yang
+          // perlu dibuka. Kode PIN_BELUM_DIATUR sudah batal.
           navigate("/dashboard", { replace: true });
           return;
         }
@@ -270,17 +271,17 @@ export default function KunciPinPage() {
 
   if (memuat) {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
         <div role="status" className="text-center text-base text-zinc-400">
           Memuat…
         </div>
-      </main>
+      </div>
     );
   }
 
   if (sesiHabis) {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
         <h1 className="text-2xl font-bold tracking-tight text-white">
           Masukkan PIN
         </h1>
@@ -296,13 +297,13 @@ export default function KunciPinPage() {
         >
           Masuk
         </Link>
-      </main>
+      </div>
     );
   }
 
   if (gagalMuat) {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
         <h1 className="text-2xl font-bold tracking-tight text-white">
           Masukkan PIN
         </h1>
@@ -312,19 +313,19 @@ export default function KunciPinPage() {
         >
           {pesan ?? "Data tidak bisa dimuat. Coba lagi."}
         </div>
-        <button
-          type="button"
+        <Button
           onClick={() => void periksaSesi()}
-          className={`mt-6 min-h-[48px] w-full rounded-xl bg-white px-4 py-3 text-base font-semibold text-black ${CINCIN_FOKUS}`}
+          fullWidth
+          className={`mt-6 ${CINCIN_FOKUS}`}
         >
           Coba lagi
-        </button>
-      </main>
+        </Button>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
+    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
       <h1
         id="judul-kunci"
         tabIndex={-1}
@@ -386,7 +387,7 @@ export default function KunciPinPage() {
                 onChange={(event) => ubahDigit(indeks, event.target.value)}
                 onKeyDown={(event) => tombolKotak(indeks, event)}
                 onPaste={(event) => tempelDigit(indeks, event)}
-                className={`min-h-[48px] min-w-0 flex-1 rounded-lg border border-zinc-500 bg-zinc-900 text-center text-xl font-semibold text-white disabled:opacity-50 ${CINCIN_FOKUS}`}
+                className={`min-h-[48px] min-w-0 flex-1 rounded-lg border border-zinc-500 bg-zinc-900 text-center text-xl font-semibold text-white disabled:bg-[#27272a] disabled:text-[#a1a1aa] ${CINCIN_FOKUS}`}
               />
             ))}
           </div>
@@ -404,7 +405,7 @@ export default function KunciPinPage() {
               disabled={terkunci || memeriksa}
               onClick={() => tekanAngka(angka)}
               aria-label={`Angka ${angka}`}
-              className={`min-h-[56px] rounded-xl border border-zinc-500 bg-zinc-900 text-xl font-semibold text-white active:bg-zinc-800 disabled:opacity-50 ${CINCIN_FOKUS}`}
+              className={`min-h-[56px] rounded-xl border border-zinc-500 bg-zinc-900 text-xl font-semibold text-white active:bg-zinc-800 disabled:bg-[#27272a] disabled:text-[#a1a1aa] ${CINCIN_FOKUS}`}
             >
               {angka}
             </button>
@@ -415,7 +416,7 @@ export default function KunciPinPage() {
             disabled={terkunci || memeriksa}
             onClick={() => tekanAngka("0")}
             aria-label="Angka 0"
-            className={`min-h-[56px] rounded-xl border border-zinc-500 bg-zinc-900 text-xl font-semibold text-white active:bg-zinc-800 disabled:opacity-50 ${CINCIN_FOKUS}`}
+            className={`min-h-[56px] rounded-xl border border-zinc-500 bg-zinc-900 text-xl font-semibold text-white active:bg-zinc-800 disabled:bg-[#27272a] disabled:text-[#a1a1aa] ${CINCIN_FOKUS}`}
           >
             0
           </button>
@@ -424,19 +425,21 @@ export default function KunciPinPage() {
             disabled={terkunci || memeriksa}
             onClick={hapusDigitTerakhir}
             aria-label="Hapus digit terakhir"
-            className={`min-h-[56px] rounded-xl border border-zinc-500 bg-zinc-900 text-base font-semibold text-white active:bg-zinc-800 disabled:opacity-50 ${CINCIN_FOKUS}`}
+            className={`min-h-[56px] rounded-xl border border-zinc-500 bg-zinc-900 text-base font-semibold text-white active:bg-zinc-800 disabled:bg-[#27272a] disabled:text-[#a1a1aa] ${CINCIN_FOKUS}`}
           >
             Hapus
           </button>
         </div>
 
-        <button
+        <Button
           type="submit"
           disabled={!bisaKirim}
-          className={`mt-6 min-h-[48px] w-full rounded-xl bg-white px-4 py-3 text-base font-semibold text-black disabled:opacity-50 ${CINCIN_FOKUS}`}
+          loading={memeriksa}
+          fullWidth
+          className={`mt-6 ${CINCIN_FOKUS}`}
         >
-          {memeriksa ? "Memeriksa…" : "Buka"}
-        </button>
+          Buka
+        </Button>
       </form>
 
       <div className="mt-8">
@@ -473,6 +476,6 @@ export default function KunciPinPage() {
       <div aria-live="polite" role="status" className="sr-only">
         {pengumuman || (memeriksa ? "Memeriksa PIN…" : "")}
       </div>
-    </main>
+    </div>
   );
 }

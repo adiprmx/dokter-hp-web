@@ -7,16 +7,17 @@
 import { Hono } from 'hono';
 import { authMiddleware, getUserId, type AppEnv } from '../auth/middleware';
 import {
-  buatPaginationMeta,
+  cursorClause,
   newId,
   nowIso,
+  paginateRows,
+  parseCursorParam,
   parseLimitParam,
-  parseOffsetParam,
   queryAll,
   queryOne,
-  queryTotal,
   runQuery,
 } from '../lib/db';
+import { batasLaju } from '../lib/ratelimit';
 import {
   assertValid,
   sebagaiObjek,
@@ -78,7 +79,11 @@ export function toHealthCheckResponse(row: HealthCheckRow): HealthCheckResponse 
 }
 
 export const healthRoutes = new Hono<AppEnv>();
-healthRoutes.use(authMiddleware);
+// Middleware dibatasi ke prefix rute ini: use() tanpa path akan
+// bocor ke semua rute /api/* saat router dipasang di apiRouter
+// (termasuk rute utilitas publik /health, /ping).
+healthRoutes.use('/health-checks*', authMiddleware);
+healthRoutes.use('/health-checks*', batasLaju);
 
 // POST /health-checks — menyimpan pemeriksaan baru (baris web selalu sync_status "synced").
 healthRoutes.post(
@@ -115,13 +120,13 @@ healthRoutes.post(
   }),
 );
 
-// GET /health-checks — daftar milik pengguna, terbaru dulu (limit/offset + total).
+// GET /health-checks — daftar milik pengguna, terbaru dulu (cursor keyset, K-32).
 healthRoutes.get(
   '/health-checks',
   bungkus<AppEnv>(async (c) => {
     const userId = getUserId(c);
     const limit = assertValid(parseLimitParam(c.req.query('limit')));
-    const offset = assertValid(parseOffsetParam(c.req.query('offset')));
+    const cursor = assertValid(parseCursorParam(c.req.query('cursor')));
     const filterSync =
       c.req.query('sync_status') === undefined
         ? null
@@ -132,20 +137,17 @@ healthRoutes.get(
       where += ' AND sync_status = ?';
       params.push(filterSync);
     }
-    const total = await queryTotal(
-      c.env.DB,
-      `SELECT COUNT(*) AS jumlah FROM health_checks ${where}`,
-      ...params,
-    );
+    const klausul = cursorClause(cursor);
     const rows = await queryAll<HealthCheckRow>(
       c.env.DB,
-      `SELECT ${KOLOM} FROM health_checks ${where} ORDER BY dibuat_pada DESC, id DESC LIMIT ? OFFSET ?`,
+      `SELECT ${KOLOM} FROM health_checks ${where} ${klausul.sql} ORDER BY dibuat_pada DESC, id DESC LIMIT ?`,
       ...params,
-      limit,
-      offset,
+      ...klausul.params,
+      limit + 1,
     );
-    return balasSukses(c, rows.map(toHealthCheckResponse), 200, {
-      pagination: buatPaginationMeta(limit, offset, total),
+    const { items, meta } = paginateRows(rows, limit);
+    return balasSukses(c, items.map(toHealthCheckResponse), 200, {
+      pagination: meta,
     });
   }),
 );

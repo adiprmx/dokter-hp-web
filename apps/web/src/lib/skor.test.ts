@@ -1,6 +1,6 @@
 // lib/skor.test.ts — Tes unit klasifikasi skor (Vitest).
 //
-// Ambang 80/60 sama dengan yang dipakai components/ui/ScoreRing.tsx.
+// Ambang 80/50 (K-31) sama dengan yang dipakai components/charts/ScoreRing.tsx.
 // Label dan penjelasan dikunci ke teks final docs/copy.md §4.
 
 import { describe, expect, it } from "vitest";
@@ -21,8 +21,8 @@ describe("klasifikasiSkor", () => {
     [100, "baik"],
     [80, "baik"],
     [79, "cukup"],
-    [60, "cukup"],
-    [59, "perlu-perhatian"],
+    [50, "cukup"],
+    [49, "perlu-perhatian"],
     [0, "perlu-perhatian"],
   ];
 
@@ -30,9 +30,9 @@ describe("klasifikasiSkor", () => {
     expect(klasifikasiSkor(skor)).toBe(kategori);
   });
 
-  it("ambang batas sesuai komponen cincin skor yang sudah ada (80/60)", () => {
+  it("ambang batas sesuai komponen cincin skor yang sudah ada (80/50)", () => {
     expect(SKOR_MIN_BAIK).toBe(80);
-    expect(SKOR_MIN_CUKUP).toBe(60);
+    expect(SKOR_MIN_CUKUP).toBe(50);
   });
 
   it("membatasi skor di luar 0-100 sebelum klasifikasi", () => {

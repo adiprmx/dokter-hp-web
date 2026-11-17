@@ -79,7 +79,14 @@ import {
   buatSesi,
   hapusSesi,
   type EnvAuth,
+  type OpsiCookie,
 } from './session';
+import {
+  BATAS_OAUTH_PER_MENIT,
+  batasLaju,
+  cekDanCatat,
+  jendelaMenit,
+} from '../lib/ratelimit';
 
 /** Nama cookie sementara untuk nilai state OAuth. */
 const NAMA_COOKIE_STATE = 'dokter_hp_oauth_state';
@@ -166,11 +173,33 @@ export function buatRouterAuth(): Hono<{ Bindings: EnvAuth; Variables: VariabelA
         'Terjadi kesalahan di server, coba lagi nanti.',
       );
     }
+    // Batas mulai OAuth: 10/menit per IP (kontrak 0.7, K-02).
+    // Fail-open bila D1 galat: alur OAuth tetap berjalan dan
+    // kegagalan D1 nyata akan terlihat di callback (server_sibuk).
+    const ip = c.req.header('CF-Connecting-IP')?.trim() || 'tidak-diketahui';
+    try {
+      const status = await cekDanCatat(
+        c.env.DB,
+        jendelaMenit('oauth', ip),
+        BATAS_OAUTH_PER_MENIT,
+      );
+      if (!status.diizinkan) {
+        return responsGalat(c, 429, 'RATE_LIMITED', 'Terlalu sering, coba lagi sebentar.');
+      }
+    } catch {
+      console.warn('[auth] Rate limit OAuth tidak dapat diperiksa (D1 galat); lanjut tanpa batas.');
+    }
     const state = buatStateAcak();
     const verifier = buatCodeVerifier();
     const challenge = await buatCodeChallenge(verifier);
     const url = buatUrlAuthGoogle({ clientId, redirectUri, state, codeChallenge: challenge });
-    const opsiCookieOAuth = { maxAgeDetik: MASA_BERLAKU_COOKIE_OAUTH_DETIK, path: JALUR_COOKIE_OAUTH };
+    // Cookie OAuth TETAP SameSite=Lax (K-50): hanya dipakai dalam
+    // alur redirect di domain API sendiri, bukan fetch lintas situs.
+    const opsiCookieOAuth: OpsiCookie = {
+      maxAgeDetik: MASA_BERLAKU_COOKIE_OAUTH_DETIK,
+      path: JALUR_COOKIE_OAUTH,
+      sameSite: 'Lax',
+    };
     c.header('Set-Cookie', buatCookie(NAMA_COOKIE_STATE, state, opsiCookieOAuth), {
       append: true,
     });
@@ -200,7 +229,11 @@ export function buatRouterAuth(): Hono<{ Bindings: EnvAuth; Variables: VariabelA
   router.get('/google/callback', async (c) => {
     const asal = asalFrontend(c.env);
     const hapusCookieOAuth = (): void => {
-      const opsiHapus = { maxAgeDetik: 0, path: JALUR_COOKIE_OAUTH };
+      const opsiHapus: OpsiCookie = {
+        maxAgeDetik: 0,
+        path: JALUR_COOKIE_OAUTH,
+        sameSite: 'Lax',
+      };
       c.header('Set-Cookie', buatCookie(NAMA_COOKIE_STATE, '', opsiHapus), { append: true });
       c.header('Set-Cookie', buatCookie(NAMA_COOKIE_VERIFIER, '', opsiHapus), { append: true });
       c.header('Set-Cookie', buatCookie(NAMA_COOKIE_REDIRECT, '', opsiHapus), { append: true });
@@ -251,7 +284,13 @@ export function buatRouterAuth(): Hono<{ Bindings: EnvAuth; Variables: VariabelA
     let token: string;
     try {
       const pengguna = await cariAtauBuatPengguna(c.env.DB, profil);
-      ({ token } = await buatSesi(c.env.DB, { idPengguna: pengguna.id }));
+      // Rekam User-Agent + IP pembuat sesi (K-44) untuk daftar
+      // sesi aktif di Pengaturan.
+      ({ token } = await buatSesi(c.env.DB, {
+        idPengguna: pengguna.id,
+        userAgent: c.req.header('User-Agent') ?? null,
+        ipTerakhir: c.req.header('CF-Connecting-IP')?.trim() || null,
+      }));
     } catch {
       return keMasuk('server_sibuk');
     }
@@ -265,7 +304,7 @@ export function buatRouterAuth(): Hono<{ Bindings: EnvAuth; Variables: VariabelA
   // -------------------------------------------------------------------------
   // POST /logout — hapus sesi di D1 + hapus cookie
   // -------------------------------------------------------------------------
-  router.post('/logout', wajibLogin, async (c) => {
+  router.post('/logout', wajibLogin, batasLaju, async (c) => {
     const token = bacaTokenDariCookie(c.req.header('Cookie'));
     if (token) {
       await hapusSesi(c.env.DB, token);
@@ -286,7 +325,7 @@ export function buatRouterAuth(): Hono<{ Bindings: EnvAuth; Variables: VariabelA
   // -------------------------------------------------------------------------
   // GET /me — profil pengguna saat ini (+ status PIN dan kunci sesi)
   // -------------------------------------------------------------------------
-  router.get('/me', wajibLogin, async (c) => {
+  router.get('/me', wajibLogin, batasLaju, async (c) => {
     const pengguna = c.get('pengguna');
     const sesi = c.get('sesi');
     const pinDiatur = pengguna.pin_hash !== null;
@@ -304,7 +343,7 @@ export function buatRouterAuth(): Hono<{ Bindings: EnvAuth; Variables: VariabelA
   // -------------------------------------------------------------------------
   // POST /pin/set — atur PIN baru atau ubah PIN lama
   // -------------------------------------------------------------------------
-  router.post('/pin/set', wajibLogin, async (c) => {
+  router.post('/pin/set', wajibLogin, batasLaju, async (c) => {
     const pin = ambilPinDariBadan(await bacaJsonBadan(c));
     if (!validasiFormatPin(pin)) {
       return responsGalat(c, 400, 'VALIDATION_ERROR', 'PIN harus 4 sampai 8 angka.');
@@ -320,7 +359,7 @@ export function buatRouterAuth(): Hono<{ Bindings: EnvAuth; Variables: VariabelA
   // -------------------------------------------------------------------------
   // POST /pin/verify — verifikasi PIN dan buka sesi
   // -------------------------------------------------------------------------
-  router.post('/pin/verify', wajibLogin, async (c) => {
+  router.post('/pin/verify', wajibLogin, batasLaju, async (c) => {
     const pin = ambilPinDariBadan(await bacaJsonBadan(c));
     // Format salah -> VALIDATION_ERROR dan TIDAK dihitung sebagai
     // percobaan salah (kontrak 2.2).
@@ -369,7 +408,7 @@ export function buatRouterAuth(): Hono<{ Bindings: EnvAuth; Variables: VariabelA
   // POST /pin/delete (+ alias /pin/hapus) — hapus PIN
   // -------------------------------------------------------------------------
   const daftarkanHapusPin = (jalur: string): void => {
-    router.post(jalur, wajibLogin, async (c) => {
+    router.post(jalur, wajibLogin, batasLaju, async (c) => {
       await pastikanTabelPin(c.env.DB);
       const status = await ambilStatusPin(c.env.DB, c.get('pengguna').id);
       if (!status || !status.pinDiatur) {

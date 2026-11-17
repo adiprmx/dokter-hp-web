@@ -1,11 +1,11 @@
 // lib/skor.ts — Klasifikasi skor kesehatan HP 0-100 (fungsi murni).
 //
 // Ambang kategori sama dengan yang sudah dipakai komponen cincin skor
-// (components/ui/ScoreRing.tsx) agar satu angka tidak pernah berbeda
-// kategori di dua tempat:
+// (components/charts/ScoreRing.tsx) agar satu angka tidak pernah berbeda
+// kategori di dua tempat (K-31: ambang 80/50):
 //   Baik             : skor 80-100
-//   Cukup            : skor 60-79
-//   Perlu perhatian  : skor 0-59
+//   Cukup            : skor 50-79
+//   Perlu perhatian  : skor 0-49
 //
 // Label dan penjelasan kategori adalah teks final dari docs/copy.md §4.
 // Warna memakai token fungsi dari src/styles/tokens.css (a11y.md §4:
@@ -17,7 +17,7 @@ export type KategoriSkor = "baik" | "cukup" | "perlu-perhatian";
 export const SKOR_MIN_BAIK = 80;
 
 /** Skor minimum kategori "Cukup". */
-export const SKOR_MIN_CUKUP = 60;
+export const SKOR_MIN_CUKUP = 50;
 
 /** Batasi skor ke rentang 0-100 dan bulatkan ke bilangan bulat. */
 export function batasiSkor(skor: number): number {

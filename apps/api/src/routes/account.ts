@@ -19,22 +19,28 @@ import {
 } from '../auth/middleware';
 import { buatCookieHapusSesi } from '../auth/session';
 import {
-  buatPaginationMeta,
+  cursorClause,
   nowIso,
+  paginateRows,
+  parseCursorParam,
   parseLimitParam,
-  parseOffsetParam,
   queryAll,
   queryOne,
-  queryTotal,
   runQuery,
   type D1Like,
 } from '../lib/db';
+import {
+  batasLaju,
+  catatEkspor,
+  detikSampaiKedaluwarsa,
+} from '../lib/ratelimit';
 import { assertValid, sebagaiObjek, validateString, validateUuid } from '../lib/validate';
 import {
   bacaBody,
   balasSukses,
   bungkus,
   konfirmasiSalah,
+  terlaluSering,
   tidakDitemukan,
   tidakValid,
 } from '../lib/envelope';
@@ -65,12 +71,16 @@ interface AiDiagnosisRow {
 interface SesiRow {
   id: string;
   user_id: string;
+  user_agent: string | null;
+  ip_terakhir: string | null;
   dibuat_pada: string;
   expires_at: string;
 }
 
 export const accountRoutes = new Hono<AppEnv>();
-accountRoutes.use(authMiddleware);
+// Middleware dibatasi ke prefix rute ini (lihat health.ts).
+accountRoutes.use('/account*', authMiddleware);
+accountRoutes.use('/account*', batasLaju);
 
 async function ambilProfil(db: D1Like, userId: string): Promise<ProfilRow> {
   // Dua query sederhana (tanpa JOIN): users adalah sumber kebenaran
@@ -143,45 +153,41 @@ accountRoutes.patch(
   }),
 );
 
-// GET /account/sessions — daftar sesi aktif milik pengguna (terbaru dulu).
-// Skema sessions nyata tidak menyimpan user_agent/ip_terakhir, jadi
-// kedua field itu selalu null; kedaluwarsa_pada dipetakan dari expires_at.
+// GET /account/sessions — daftar sesi aktif milik pengguna (terbaru dulu,
+// cursor keyset K-32). user_agent/ip_terakhir diisi sejak migrasi 0004
+// (K-44); sesi lama yang dibuat sebelum migrasi tetap null.
 accountRoutes.get(
   '/account/sessions',
   bungkus<AppEnv>(async (c) => {
     const userId = getUserId(c);
     const sesiSaatIni = getSessionId(c);
     const limit = assertValid(parseLimitParam(c.req.query('limit')));
-    const offset = assertValid(parseOffsetParam(c.req.query('offset')));
+    const cursor = assertValid(parseCursorParam(c.req.query('cursor')));
     const sekarang = nowIso();
-    const total = await queryTotal(
-      c.env.DB,
-      'SELECT COUNT(*) AS jumlah FROM sessions WHERE user_id = ? AND expires_at > ?',
-      userId,
-      sekarang,
-    );
+    const klausul = cursorClause(cursor);
     const rows = await queryAll<SesiRow>(
       c.env.DB,
-      `SELECT id, user_id, dibuat_pada, expires_at FROM sessions
-       WHERE user_id = ? AND expires_at > ?
-       ORDER BY dibuat_pada DESC, id DESC LIMIT ? OFFSET ?`,
+      `SELECT id, user_id, user_agent, ip_terakhir, dibuat_pada, expires_at FROM sessions
+       WHERE user_id = ? AND expires_at > ? ${klausul.sql}
+       ORDER BY dibuat_pada DESC, id DESC LIMIT ?`,
       userId,
       sekarang,
-      limit,
-      offset,
+      ...klausul.params,
+      limit + 1,
     );
+    const { items, meta } = paginateRows(rows, limit);
     return balasSukses(
       c,
-      rows.map((s) => ({
+      items.map((s) => ({
         id: s.id,
         saat_ini: s.id === sesiSaatIni,
-        user_agent: null,
-        ip_terakhir: null,
+        user_agent: s.user_agent ?? null,
+        ip_terakhir: s.ip_terakhir ?? null,
         dibuat_pada: s.dibuat_pada,
         kedaluwarsa_pada: s.expires_at,
       })),
       200,
-      { pagination: buatPaginationMeta(limit, offset, total) },
+      { pagination: meta },
     );
   }),
 );
@@ -227,10 +233,16 @@ accountRoutes.delete(
 
 // GET /account/export — ekspor seluruh data milik pengguna sebagai
 // satu file JSON TANPA envelope (kontrak 6.6: ini berkas unduhan).
+// Dibatasi 5/hari per pengguna (K-42/K-59); cek batas dilakukan
+// SEBELUM query berat agar upaya ke-6 tidak membebani D1.
 accountRoutes.get(
   '/account/export',
   bungkus<AppEnv>(async (c) => {
     const userId = getUserId(c);
+    const { status, jendela } = await catatEkspor(c.env.DB, userId);
+    if (!status.diizinkan) {
+      throw terlaluSering(detikSampaiKedaluwarsa(jendela));
+    }
     const batas = BATAS_EKSPOR_PER_TABEL;
     const profil = await ambilProfil(c.env.DB, userId);
     const kesehatan = await queryAll<HealthCheckRow>(
@@ -335,7 +347,7 @@ accountRoutes.get(
 );
 
 // DELETE /account — hapus akun + seluruh data milik pengguna.
-// Wajib konfirmasi badan { "konfirmasi": "HAPUS" }.
+// Wajib konfirmasi badan { "konfirmasi": "HAPUS" } atau "DELETE" (K-26).
 accountRoutes.delete(
   '/account',
   bungkus<AppEnv>(async (c) => {
@@ -344,7 +356,7 @@ accountRoutes.delete(
     if (!body || body.konfirmasi === undefined || typeof body.konfirmasi !== 'string') {
       throw tidakValid('Teks konfirmasi wajib diisi.');
     }
-    if (body.konfirmasi !== 'HAPUS') {
+    if (body.konfirmasi !== 'HAPUS' && body.konfirmasi !== 'DELETE') {
       throw konfirmasiSalah();
     }
     const profil = await ambilProfil(c.env.DB, userId);

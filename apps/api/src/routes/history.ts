@@ -1,29 +1,27 @@
 // apps/api/src/routes/history.ts
 // Riwayat gabungan (pemeriksaan kesehatan + laporan WiFi + diagnosis AI)
-// — di belakang auth. Semua query memfilter user_id dari sesi; data
-// pengguna lain tidak pernah dikembalikan (D1 tanpa RLS, kepemilikan
-// ditegakkan di kode).
+// — di belakang auth. Mengikuti docs/api-contracts.md bagian 7.
+// Semua query memfilter user_id dari sesi; data pengguna lain tidak
+// pernah dikembalikan (D1 tanpa RLS, kepemilikan ditegakkan di kode).
 //
-// Endpoint ini tambahan di luar docs/api-contracts.md (kontrak tidak
-// mendefinisikan /history — frontend menggabungkan ketiga daftar di
-// client). Bentuk respons mengikuti konvensi kontrak: envelope standar,
-// paginasi offset dengan meta.pagination, dan kode galat kontrak.
-//
-// Paginasi gabungan: tiap jenis diambil sebanyak offset+limit, lalu
-// digabung, diurutkan (terbaru dulu), dan dipotong di kode.
+// Paginasi gabungan (cursor keyset, K-32): tiap jenis diambil
+// sebanyak limit+1 dengan klausa cursor yang sama, lalu digabung,
+// diurutkan (terbaru dulu), dan dipotong di kode lewat paginateRows.
 
 import { Hono } from 'hono';
 import { authMiddleware, getUserId, type AppEnv } from '../auth/middleware';
 import {
-  buatPaginationMeta,
+  cursorClause,
   nowIso,
+  paginateRows,
+  parseCursorParam,
   parseLimitParam,
-  parseOffsetParam,
   queryAll,
-  queryTotal,
   runQuery,
+  type Cursor,
   type D1Like,
 } from '../lib/db';
+import { batasLaju } from '../lib/ratelimit';
 import {
   assertValid,
   JENIS_RIWAYAT,
@@ -52,19 +50,24 @@ interface AiDiagnosisRow {
 }
 
 export const historyRoutes = new Hono<AppEnv>();
-historyRoutes.use(authMiddleware);
+// Middleware dibatasi ke prefix rute ini (lihat health.ts).
+historyRoutes.use('/history*', authMiddleware);
+historyRoutes.use('/history*', batasLaju);
 
 async function ambilKesehatan(
   db: D1Like,
   userId: string,
   ambil: number,
+  cursor: Cursor | null,
 ): Promise<ItemRiwayat[]> {
+  const klausul = cursorClause(cursor);
   const rows = await queryAll<HealthCheckRow>(
     db,
     `SELECT id, user_id, skor, ringkasan, dibuat_pada, updated_at, deleted_at, sync_status
-     FROM health_checks WHERE user_id = ? AND deleted_at IS NULL
+     FROM health_checks WHERE user_id = ? AND deleted_at IS NULL ${klausul.sql}
      ORDER BY dibuat_pada DESC, id DESC LIMIT ?`,
     userId,
+    ...klausul.params,
     ambil,
   );
   return rows.map((row) => {
@@ -86,13 +89,16 @@ async function ambilWifi(
   db: D1Like,
   userId: string,
   ambil: number,
+  cursor: Cursor | null,
 ): Promise<ItemRiwayat[]> {
+  const klausul = cursorClause(cursor);
   const rows = await queryAll<WifiReportRow>(
     db,
     `SELECT id, user_id, ssid, kecepatan_koneksi_mbps, kekuatan_sinyal, channel, dns, ping_ms, rekomendasi, kecepatan_unduh_kbps, sumber, durasi_tes_detik, dibuat_pada, updated_at, deleted_at
-     FROM wifi_reports WHERE user_id = ? AND deleted_at IS NULL
+     FROM wifi_reports WHERE user_id = ? AND deleted_at IS NULL ${klausul.sql}
      ORDER BY dibuat_pada DESC, id DESC LIMIT ?`,
     userId,
+    ...klausul.params,
     ambil,
   );
   return rows.map((row) => {
@@ -105,10 +111,13 @@ async function ambilWifi(
         ssid: respons.ssid,
         kecepatan_koneksi_mbps: respons.kecepatan_koneksi_mbps,
         kekuatan_sinyal: respons.kekuatan_sinyal,
+        channel: respons.channel,
+        dns: respons.dns,
         kecepatan_unduh_kbps: respons.kecepatan_unduh_kbps,
         ping_ms: respons.ping_ms,
         rekomendasi: respons.rekomendasi,
         sumber: respons.sumber,
+        durasi_tes_detik: respons.durasi_tes_detik,
       },
     };
   });
@@ -118,13 +127,16 @@ async function ambilAi(
   db: D1Like,
   userId: string,
   ambil: number,
+  cursor: Cursor | null,
 ): Promise<ItemRiwayat[]> {
+  const klausul = cursorClause(cursor);
   const rows = await queryAll<AiDiagnosisRow>(
     db,
     `SELECT id, user_id, health_check_id, pertanyaan, jawaban, dibuat_pada
-     FROM ai_diagnoses WHERE user_id = ?
+     FROM ai_diagnoses WHERE user_id = ? ${klausul.sql}
      ORDER BY dibuat_pada DESC, id DESC LIMIT ?`,
     userId,
+    ...klausul.params,
     ambil,
   );
   return rows.map((row) => ({
@@ -148,61 +160,35 @@ function urutGabungan(a: ItemRiwayat, b: ItemRiwayat): number {
   return a.id < b.id ? 1 : -1;
 }
 
-// GET /history — riwayat gabungan (?jenis=kesehatan|wifi|ai|semua, limit, offset).
+// GET /history — riwayat gabungan (?jenis=kesehatan|wifi|ai|semua, limit, cursor).
 historyRoutes.get(
   '/history',
   bungkus<AppEnv>(async (c) => {
     const userId = getUserId(c);
     const limit = assertValid(parseLimitParam(c.req.query('limit')));
-    const offset = assertValid(parseOffsetParam(c.req.query('offset')));
+    const cursor = assertValid(parseCursorParam(c.req.query('cursor')));
     const jenisParam = c.req.query('jenis');
     let jenis: JenisRiwayat[] = [...JENIS_RIWAYAT];
     if (jenisParam !== undefined && jenisParam !== 'semua') {
       const satu = assertValid(validateJenisRiwayat(jenisParam));
       jenis = satu ? [satu] : [...JENIS_RIWAYAT];
     }
-    const ambil = offset + limit;
+    const ambil = limit + 1;
     const tugas: Promise<ItemRiwayat[]>[] = [];
-    const hitung: Promise<number>[] = [];
     if (jenis.includes('kesehatan')) {
-      tugas.push(ambilKesehatan(c.env.DB, userId, ambil));
-      hitung.push(
-        queryTotal(
-          c.env.DB,
-          'SELECT COUNT(*) AS jumlah FROM health_checks WHERE user_id = ? AND deleted_at IS NULL',
-          userId,
-        ),
-      );
+      tugas.push(ambilKesehatan(c.env.DB, userId, ambil, cursor));
     }
     if (jenis.includes('wifi')) {
-      tugas.push(ambilWifi(c.env.DB, userId, ambil));
-      hitung.push(
-        queryTotal(
-          c.env.DB,
-          'SELECT COUNT(*) AS jumlah FROM wifi_reports WHERE user_id = ? AND deleted_at IS NULL',
-          userId,
-        ),
-      );
+      tugas.push(ambilWifi(c.env.DB, userId, ambil, cursor));
     }
     if (jenis.includes('ai')) {
-      tugas.push(ambilAi(c.env.DB, userId, ambil));
-      hitung.push(
-        queryTotal(
-          c.env.DB,
-          'SELECT COUNT(*) AS jumlah FROM ai_diagnoses WHERE user_id = ?',
-          userId,
-        ),
-      );
+      tugas.push(ambilAi(c.env.DB, userId, ambil, cursor));
     }
-    const [hasil, jumlah] = await Promise.all([
-      Promise.all(tugas),
-      Promise.all(hitung),
-    ]);
-    const total = jumlah.reduce((a, b) => a + b, 0);
+    const hasil = await Promise.all(tugas);
     const gabungan = hasil.flat().sort(urutGabungan);
-    const halaman = gabungan.slice(offset, offset + limit);
-    return balasSukses(c, halaman, 200, {
-      pagination: buatPaginationMeta(limit, offset, total),
+    const { items, meta } = paginateRows(gabungan, limit);
+    return balasSukses(c, items, 200, {
+      pagination: meta,
       jenis: jenisParam ?? 'semua',
     });
   }),

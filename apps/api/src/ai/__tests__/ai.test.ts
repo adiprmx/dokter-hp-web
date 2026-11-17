@@ -45,6 +45,7 @@ import {
   validasiPertanyaan,
 } from '../routes';
 import type { AiBindings, AiVariables } from '../routes';
+import { encodeCursor } from '../../lib/db';
 
 // ---------------------------------------------------------------------
 // Mock D1
@@ -67,10 +68,10 @@ interface BarisCacheAi {
 
 /**
  * Mock D1 minimal: mendukung SELECT COUNT ai_diagnoses (hitung
- * harian + total), SELECT daftar riwayat, SELECT ai_cache (baca
- * cache), SELECT health_checks (kepemilikan + konteks), SELECT
- * wifi_reports (konteks), INSERT ai_diagnoses, dan INSERT OR
- * REPLACE ai_cache (tulis cache). Perilaku dipilih dari teks SQL.
+ * harian), SELECT daftar riwayat (cursor keyset), SELECT ai_cache
+ * (baca cache), SELECT health_checks (kepemilikan + konteks),
+ * SELECT wifi_reports (konteks), INSERT ai_diagnoses, dan INSERT
+ * OR REPLACE ai_cache (tulis cache). Perilaku dipilih dari teks SQL.
  */
 function buatMockDb(awal: {
   diagnosis?: BarisDiagnosis[];
@@ -154,12 +155,29 @@ function buatMockDb(awal: {
           if (gagal.has('all')) throw new Error('D1 gagal (mock)');
           if (sql.includes('FROM ai_diagnoses')) {
             const idPengguna = nilaiBind[0] as string;
-            const limit = (nilaiBind[1] as number) ?? 50;
-            const offset = (nilaiBind[2] as number) ?? 0;
+            // Bind: [userId, (dibuat, dibuat, id)?, limit+1].
+            const punyaCursor = sql.includes('dibuat_pada < ?');
+            const cursor = punyaCursor
+              ? { dibuat_pada: nilaiBind[1] as string, id: nilaiBind[3] as string }
+              : null;
+            const limit = ((punyaCursor ? nilaiBind[4] : nilaiBind[1]) as number) ?? 50;
             const milik = diagnosis
               .filter((b) => b.user_id === idPengguna)
-              .sort((a, b) => (a.dibuat_pada < b.dibuat_pada ? 1 : -1))
-              .slice(offset, offset + limit);
+              .filter((b) => {
+                if (!cursor) return true;
+                if (b.dibuat_pada !== cursor.dibuat_pada) {
+                  return b.dibuat_pada < cursor.dibuat_pada;
+                }
+                return b.id < cursor.id;
+              })
+              .sort((a, b) => {
+                if (a.dibuat_pada !== b.dibuat_pada) {
+                  return a.dibuat_pada < b.dibuat_pada ? 1 : -1;
+                }
+                if (a.id === b.id) return 0;
+                return a.id < b.id ? 1 : -1;
+              })
+              .slice(0, limit);
             return { results: milik as T[], success: true };
           }
           return { results: [], success: true };
@@ -369,21 +387,21 @@ describe('apakahUuidValid', () => {
   });
 });
 
-describe('parsePaginasi (kontrak 0.6)', () => {
-  it('bawaan limit 20 offset 0', () => {
-    expect(parsePaginasi({})).toEqual({ ok: true, limit: 20, offset: 0 });
+describe('parsePaginasi (kontrak 0.6, cursor K-32/K-38)', () => {
+  it('bawaan limit 20, cursor null (halaman pertama)', () => {
+    expect(parsePaginasi({})).toEqual({ ok: true, limit: 20, cursor: null });
   });
 
   it('menjepit limit ke 1-100 (bukan galat)', () => {
     expect(parsePaginasi({ limit: '500' })).toEqual({
       ok: true,
       limit: 100,
-      offset: 0,
+      cursor: null,
     });
     expect(parsePaginasi({ limit: '0' })).toEqual({
       ok: true,
       limit: 1,
-      offset: 0,
+      cursor: null,
     });
   });
 
@@ -395,19 +413,22 @@ describe('parsePaginasi (kontrak 0.6)', () => {
     expect(parsePaginasi({ limit: '2.5' })).toMatchObject({ ok: false });
   });
 
-  it('menolak offset negatif dan bukan angka', () => {
-    expect(parsePaginasi({ offset: '-5' })).toMatchObject({
+  it('menolak cursor cacat', () => {
+    expect(parsePaginasi({ cursor: 'bukan-base64!!!' })).toMatchObject({
       ok: false,
       kode: 'VALIDATION_ERROR',
     });
-    expect(parsePaginasi({ offset: 'abc' })).toMatchObject({ ok: false });
+    expect(
+      parsePaginasi({ cursor: encodeCursor({ dibuat_pada: '', id: 'x' }) }),
+    ).toMatchObject({ ok: false });
   });
 
   it('memakai nilai yang sah apa adanya', () => {
-    expect(parsePaginasi({ limit: '5', offset: '10' })).toEqual({
+    const cursor = { dibuat_pada: '2026-11-17T10:00:00.000Z', id: 'abc-123' };
+    expect(parsePaginasi({ limit: '5', cursor: encodeCursor(cursor) })).toEqual({
       ok: true,
       limit: 5,
-      offset: 10,
+      cursor,
     });
   });
 });
@@ -1124,6 +1145,7 @@ describe('rute AI (Hono)', () => {
     const db = buatMockDb();
     vi.stubGlobal('fetch', buatFetchMock({ error: 'kuota' }, 429));
     const app = buatApp(db, 'user-1');
+    const peringatan = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const respons = await tanya(app, 'WiFi lemot');
     expect(respons.status).toBe(200);
     const badan = (await respons.json()) as Record<string, unknown>;
@@ -1135,6 +1157,13 @@ describe('rute AI (Hono)', () => {
     expect(data.sisa_hari_ini).toBe(20);
     expect(String(data.jawaban)).toContain('bukan dari AI');
     expect(db.diagnosis.length).toBe(0);
+    // Kuota habis dicatat ke log server (tanpa data pengguna).
+    expect(peringatan).toHaveBeenCalledWith(
+      expect.stringContaining('Kuota Gemini habis'),
+    );
+    const semuaPesan = peringatan.mock.calls.flat().join(' ');
+    expect(semuaPesan).not.toContain('WiFi lemot');
+    peringatan.mockRestore();
   });
 
   it('POST /api/ai/tanya: kunci belum diatur -> jawaban fallback 200, tanpa memanggil Gemini', async () => {
@@ -1206,12 +1235,19 @@ describe('rute AI (Hono)', () => {
     expect(db.diagnosis[0]?.health_check_id).toBe(UUID_MILIK);
   });
 
-  it('POST /ai/diagnose (alias arsitektur) berperilaku sama', async () => {
+  it('POST /api/ai/diagnose (kanonis K-37) berperilaku sama dengan alias /tanya', async () => {
     const db = buatMockDb();
-    vi.stubGlobal('fetch', buatFetchMock(responsGemini('Jawaban alias.')));
+    vi.stubGlobal('fetch', buatFetchMock(responsGemini('Jawaban kanonis.')));
     const app = buatApp(db, 'user-1');
-    const respons = await tanya(app, 'Tes alias', {}, '/ai/diagnose');
+    const respons = await tanya(app, 'Tes kanonis', {}, '/api/ai/diagnose');
     expect(respons.status).toBe(200);
+  });
+
+  it('POST /ai/diagnose (alias lama tanpa /api) sudah tidak ada (K-37)', async () => {
+    const db = buatMockDb();
+    const app = buatApp(db, 'user-1');
+    const respons = await tanya(app, 'Tes alias lama', {}, '/ai/diagnose');
+    expect(respons.status).toBe(404);
   });
 
   it('GET /api/ai/riwayat: hanya data milik pengguna, terbaru dulu, data array + meta.pagination', async () => {
@@ -1233,51 +1269,88 @@ describe('rute AI (Hono)', () => {
     const meta = badan.meta as {
       pagination: {
         limit: number;
-        offset: number;
-        total: number;
+        next_cursor: string | null;
         has_more: boolean;
       };
     };
     expect(meta.pagination).toEqual({
       limit: 20,
-      offset: 0,
-      total: 2,
+      next_cursor: null,
       has_more: false,
     });
   });
 
-  it('GET /api/ai/riwayat: paginasi limit dan offset bekerja, has_more benar', async () => {
+  it('GET /api/ai/diagnoses (kanonis K-37) berperilaku sama dengan alias /riwayat', async () => {
+    const db = buatMockDb({
+      diagnosis: [barisDiagnosis('user-1', '2026-11-17T08:00:00.000Z', 'satu')],
+    });
+    const app = buatApp(db, 'user-1');
+    const respons = await app.request('/api/ai/diagnoses', {}, envUntuk(app));
+    expect(respons.status).toBe(200);
+    const badan = (await respons.json()) as Record<string, unknown>;
+    const items = badan.data as { id: string }[];
+    expect(items.map((i) => i.id)).toEqual(['satu']);
+  });
+
+  it('GET /ai/diagnoses (alias lama tanpa /api) sudah tidak ada (K-37)', async () => {
+    const db = buatMockDb({
+      diagnosis: [barisDiagnosis('user-1', '2026-11-17T08:00:00.000Z', 'satu')],
+    });
+    const app = buatApp(db, 'user-1');
+    const respons = await app.request('/ai/diagnoses', {}, envUntuk(app));
+    expect(respons.status).toBe(404);
+  });
+
+  it('GET /api/ai/riwayat: paginasi cursor bekerja, has_more benar', async () => {
     const db = buatMockDb({
       diagnosis: Array.from({ length: 5 }, (_, i) =>
         barisDiagnosis('user-1', `2026-11-17T0${i}:00:00.000Z`, `d${i}`),
       ),
     });
     const app = buatApp(db, 'user-1');
-    const respons = await app.request(
-      '/api/ai/riwayat?limit=2&offset=2',
+    const halaman1 = await app.request('/api/ai/riwayat?limit=2', {}, envUntuk(app));
+    const badan1 = (await halaman1.json()) as Record<string, unknown>;
+    const items1 = badan1.data as { id: string }[];
+    const meta1 = badan1.meta as {
+      pagination: { limit: number; next_cursor: string | null; has_more: boolean };
+    };
+    expect(items1.map((i) => i.id)).toEqual(['d4', 'd3']);
+    expect(meta1.pagination).toEqual({
+      limit: 2,
+      next_cursor: expect.any(String),
+      has_more: true,
+    });
+    const halaman2 = await app.request(
+      `/api/ai/riwayat?limit=2&cursor=${encodeURIComponent(meta1.pagination.next_cursor as string)}`,
       {},
       envUntuk(app),
     );
-    const badan = (await respons.json()) as Record<string, unknown>;
-    const items = badan.data as { id: string }[];
-    const meta = badan.meta as {
-      pagination: {
-        limit: number;
-        offset: number;
-        total: number;
-        has_more: boolean;
-      };
+    const badan2 = (await halaman2.json()) as Record<string, unknown>;
+    const items2 = badan2.data as { id: string }[];
+    const meta2 = badan2.meta as {
+      pagination: { limit: number; next_cursor: string | null; has_more: boolean };
     };
-    expect(meta.pagination).toEqual({
+    expect(items2.map((i) => i.id)).toEqual(['d2', 'd1']);
+    expect(meta2.pagination.has_more).toBe(true);
+    const halaman3 = await app.request(
+      `/api/ai/riwayat?limit=2&cursor=${encodeURIComponent(meta2.pagination.next_cursor as string)}`,
+      {},
+      envUntuk(app),
+    );
+    const badan3 = (await halaman3.json()) as Record<string, unknown>;
+    const items3 = badan3.data as { id: string }[];
+    const meta3 = badan3.meta as {
+      pagination: { limit: number; next_cursor: string | null; has_more: boolean };
+    };
+    expect(items3.map((i) => i.id)).toEqual(['d0']);
+    expect(meta3.pagination).toEqual({
       limit: 2,
-      offset: 2,
-      total: 5,
-      has_more: true,
+      next_cursor: null,
+      has_more: false,
     });
-    expect(items.map((i) => i.id)).toEqual(['d2', 'd1']);
   });
 
-  it('GET /api/ai/riwayat: 400 untuk limit bukan angka dan offset negatif', async () => {
+  it('GET /api/ai/riwayat: 400 untuk limit bukan angka dan cursor cacat', async () => {
     const db = buatMockDb();
     const app = buatApp(db, 'user-1');
     const respons1 = await app.request(
@@ -1287,23 +1360,11 @@ describe('rute AI (Hono)', () => {
     );
     expect(respons1.status).toBe(400);
     const respons2 = await app.request(
-      '/api/ai/riwayat?offset=-1',
+      '/api/ai/riwayat?cursor=bukan-cursor!!!',
       {},
       envUntuk(app),
     );
     expect(respons2.status).toBe(400);
-  });
-
-  it('GET /ai/diagnoses (alias arsitektur) berperilaku sama', async () => {
-    const db = buatMockDb({
-      diagnosis: [barisDiagnosis('user-1', '2026-11-17T08:00:00.000Z', 'satu')],
-    });
-    const app = buatApp(db, 'user-1');
-    const respons = await app.request('/ai/diagnoses', {}, envUntuk(app));
-    expect(respons.status).toBe(200);
-    const badan = (await respons.json()) as Record<string, unknown>;
-    const meta = badan.meta as { pagination: { total: number } };
-    expect(meta.pagination.total).toBe(1);
   });
 
   it('GET /api/ai/riwayat: 401 bila tanpa userId', async () => {

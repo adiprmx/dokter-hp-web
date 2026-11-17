@@ -18,7 +18,7 @@ export default function MasukPage() {
   }, []);
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
+    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
       <p className="text-sm font-semibold text-zinc-400">Dokter HP</p>
       <h1
         id="judul-masuk"
@@ -64,6 +64,6 @@ export default function MasukPage() {
       <div aria-live="polite" role="status" className="sr-only">
         {memproses ? "Memproses masuk…" : ""}
       </div>
-    </main>
+    </div>
   );
 }

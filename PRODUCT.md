@@ -301,6 +301,14 @@ browser tidak bisa membaca sensor perangkat:
 2. Skor 0-100 tampil beserta penjelasan per komponen dan sumber data
    tiap komponen (tes web / input manual / riwayat APK).
 3. Skor tersimpan ke riwayat; grafik riwayat skor diperbarui.
+4. Dalam satu ketuk yang sama, halaman memanggil Diagnosis AI dengan
+   pertanyaan baku "Bagaimana kondisi HP saya berdasarkan data
+   pemeriksaan terakhir?" dan `health_check_id` pemeriksaan terbaru
+   (bila ada) — `POST /api/ai/diagnose` (K-28). Pengguna tidak perlu
+   mengetik apa pun.
+5. Jawaban AI tampil di dashboard dengan label **"Saran dari AI"**
+   dan tersimpan ke riwayat diagnosis; halaman Riwayat dan PDF
+   menampilkan jawaban yang sama.
 
 ### 5.3 Alur kunci aplikasi (PIN)
 

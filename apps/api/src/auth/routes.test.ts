@@ -105,14 +105,25 @@ class D1Palsu implements DbD1 {
           return { success: true };
         }
         if (sqlNormal.startsWith('INSERT INTO SESSIONS')) {
-          const [id, user_id, token_hash, expires_at, dibuat_pada] = nilai as [
-            string,
-            string,
-            string,
-            string,
-            string,
-          ];
-          db.sesi.set(id, { id, user_id, token_hash, expires_at, dibuat_pada });
+          const [id, user_id, token_hash, expires_at, dibuat_pada, user_agent, ip_terakhir] =
+            nilai as [
+              string,
+              string,
+              string,
+              string,
+              string,
+              string | null,
+              string | null,
+            ];
+          db.sesi.set(id, {
+            id,
+            user_id,
+            token_hash,
+            expires_at,
+            dibuat_pada,
+            user_agent: user_agent ?? null,
+            ip_terakhir: ip_terakhir ?? null,
+          });
           return { success: true };
         }
         if (sqlNormal.startsWith('INSERT INTO PIN_ATTEMPTS')) {
@@ -168,6 +179,11 @@ class D1Palsu implements DbD1 {
         }
         if (sqlNormal.startsWith('DELETE FROM PIN_UNLOCKS')) {
           db.bukaPin.delete(nilai[0] as string);
+          return { success: true };
+        }
+        if (sqlNormal.startsWith('INSERT INTO RATE_LIMITS')) {
+          // Rate limit (lib/ratelimit): mock tidak menyimpan
+          // hitungan — batas tidak pernah tercapai di tes auth.
           return { success: true };
         }
         throw new Error(`SQL tidak dikenali D1 palsu: ${sql}`);
@@ -391,7 +407,7 @@ describe('GET /api/auth/google/callback', () => {
     const barisCookie = ambilBarisSetCookie(res, NAMA_COOKIE_SESI);
     expect(barisCookie).toContain('HttpOnly');
     expect(barisCookie).toContain('Secure');
-    expect(barisCookie).toContain('SameSite=Lax');
+    expect(barisCookie).toContain('SameSite=None');
     // Cookie OAuth sementara dihapus (dengan Path yang sama).
     expect(ambilBarisSetCookie(res, 'dokter_hp_oauth_state')).toContain('Max-Age=0');
     expect(ambilBarisSetCookie(res, 'dokter_hp_oauth_state')).toContain('Path=/api/auth');

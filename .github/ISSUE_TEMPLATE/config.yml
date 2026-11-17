@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Tanya jawab dan masukan (GitHub Discussions)
+    url: https://github.com/adiprmx/dokter-hp-web/discussions
+    about: Bertanya cara memakai aplikasi, memberi masukan umum, atau berbagi pengalaman — bukan untuk laporan bug atau permintaan fitur.
+  - name: Panduan pengguna
+    url: https://github.com/adiprmx/dokter-hp-web/blob/main/docs/panduan-pengguna.md
+    about: Baca panduan cara memakai Dokter HP Web App sebelum membuka issue.
+  - name: Masalah pada APK Dokter HP (Android)
+    url: https://github.com/adiprmx/dokter-hp/issues
+    about: Laporan masalah pada aplikasi Android Dokter HP disampaikan di repo APK, bukan di repo web ini.

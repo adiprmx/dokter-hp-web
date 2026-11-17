@@ -11,13 +11,11 @@
 //   bila ada. Worker merakit konteks dari riwayat pengguna (kontrak API §5);
 //   jawaban tampil di halaman ini dan tersimpan ke riwayat diagnosis.
 //
-// Keterjangkauan server: halaman ini TIDAK memakai checkApiHealth()
-// (lib/api.ts) — fungsi itu memeriksa field `ok` di tingkat envelope,
-// padahal GET /api/health mengembalikan envelope { data: { status: "ok" } },
-// sehingga selalu mengembalikan false. Sebagai gantinya, halaman ini
-// menilai dari request data yang sebenarnya: bila fetch gagal di tingkat
-// jaringan (bukan respons HTTP), server dianggap tidak terjangkau dan
-// banner ditampilkan + apiStatus di store diperbarui.
+// Keterjangkauan server: halaman ini menilai dari request data yang
+// sebenarnya — bila fetch gagal di tingkat jaringan (bukan respons
+// HTTP), server dianggap tidak terjangkau dan banner ditampilkan +
+// apiStatus di store diperbarui. (checkApiHealth() di lib/api.ts
+// sudah diperbaiki ke envelope K-24 dan dipakai halaman /wifi.)
 //
 // Performa (docs/performance.md 3.2): grafik riwayat skor dimuat malas
 // (React.lazy) dan hanya di-render setelah data selesai dimuat dan ada data.
@@ -31,7 +29,7 @@ import {
   useState,
 } from "react";
 import { Link } from "react-router-dom";
-import { fetchJson } from "../lib/api";
+import { ApiError, panggilApi } from "../lib/api";
 import { useAppStore } from "../store/useAppStore";
 import {
   klasifikasiSkor,
@@ -46,13 +44,6 @@ const ScoreHistoryChart = lazy(() =>
     default: m.ScoreHistoryChart,
   })),
 );
-
-// Envelope JSON standar (docs/api-contracts.md 0.3).
-interface ApiEnvelope<T> {
-  success: boolean;
-  data: T;
-  meta?: { timestamp?: string };
-}
 
 // Bentuk health check (docs/api-contracts.md §3).
 interface KomponenRingkasan {
@@ -148,15 +139,18 @@ function formatWaktu(iso: string): string {
 }
 
 /**
- * Ambil status HTTP dari galat yang dilempar fetchJson (lib/api.ts):
- * galat HTTP berbentuk Error("Permintaan <path> gagal: <status>"),
- * sedangkan galat jaringan meneruskan galat fetch asli (tanpa pola itu)
- * dan mengembalikan null.
+ * Ambil status HTTP dari galat API (lib/api.ts): ApiError membawa
+ * status; galat jaringan (bukan ApiError) mengembalikan null.
  */
 function statusHttpDariGalat(galat: unknown): number | null {
-  if (!(galat instanceof Error)) return null;
-  const cocok = galat.message.match(/gagal:\s(\d{3})\s*$/);
-  return cocok ? Number(cocok[1]) : null;
+  if (galat instanceof ApiError) return galat.status;
+  return null;
+}
+
+/** Ambil kode galat mesin dari ApiError (null bila bukan ApiError). */
+function kodeDariGalat(galat: unknown): string | null {
+  if (galat instanceof ApiError) return galat.code;
+  return null;
 }
 
 export default function DashboardPage() {
@@ -189,12 +183,12 @@ export default function DashboardPage() {
     setBelumMasuk(false);
     setTerkunci(false);
     try {
-      const hasil = await fetchJson<ApiEnvelope<HealthCheck[]>>(
+      const data = await panggilApi<HealthCheck[]>(
         "/api/health-checks?limit=30",
       );
       // Respons HTTP apa pun yang berhasil berarti server terjangkau.
       setApiStatus("terhubung");
-      setData(Array.isArray(hasil.data) ? hasil.data : []);
+      setData(Array.isArray(data) ? data : []);
     } catch (galat) {
       const status = statusHttpDariGalat(galat);
       if (status === null) {
@@ -237,28 +231,30 @@ export default function DashboardPage() {
     setDiagnosisGalat(null);
     setPesanStatus(null);
     try {
-      const hasil = await fetchJson<ApiEnvelope<AiDiagnosis>>(
-        "/api/ai/diagnose",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            pertanyaan: PERTANYAAN_SATU_KETUK,
-            ...(terbaru ? { health_check_id: terbaru.id } : {}),
-          }),
-        },
-      );
-      setDiagnosis(hasil.data);
+      const data = await panggilApi<AiDiagnosis>("/api/ai/diagnose", {
+        method: "POST",
+        body: JSON.stringify({
+          pertanyaan: PERTANYAAN_SATU_KETUK,
+          ...(terbaru ? { health_check_id: terbaru.id } : {}),
+        }),
+      });
+      setDiagnosis(data);
       setPesanStatus(
         "Jawaban sudah tampil di bawah. Tanya jawab ini tersimpan ke riwayat.",
       );
     } catch (galat) {
       const status = statusHttpDariGalat(galat);
-      if (status === 429) {
+      const kode = kodeDariGalat(galat);
+      if (kode === "AI_QUOTA_HABIS") {
         setDiagnosisGalat(
           "Batas 20 pertanyaan hari ini sudah habis. Batas kembali besok.",
         );
-      } else if (status === 502) {
-        setDiagnosisGalat("Diagnosis AI sedang tidak tersedia, coba lagi nanti.");
+      } else if (kode === "RATE_LIMITED") {
+        setDiagnosisGalat("Terlalu sering, coba lagi sebentar.");
+      } else if (status === 429) {
+        setDiagnosisGalat(
+          "Batas 20 pertanyaan hari ini sudah habis. Batas kembali besok.",
+        );
       } else if (status === 401) {
         setDiagnosisGalat("Sesi sudah berakhir. Masuk lagi untuk lanjut.");
       } else if (status === null) {
@@ -280,7 +276,7 @@ export default function DashboardPage() {
     terbaru === null ? [] : Object.entries(terbaru.ringkasan ?? {});
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6">
       <h1
         ref={judulRef}
         tabIndex={-1}
@@ -600,6 +596,6 @@ export default function DashboardPage() {
           </>
         )}
       </section>
-    </main>
+    </div>
   );
 }

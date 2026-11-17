@@ -61,7 +61,7 @@ export default function PanduanPage() {
 
   if (!panduan) {
     return (
-      <main className="min-h-screen bg-black text-zinc-100">
+      <div className="min-h-screen bg-black text-zinc-100">
         <div className="mx-auto w-full max-w-2xl px-5 pb-16 pt-10 sm:pt-14">
           <h1
             ref={judulRef}
@@ -100,14 +100,14 @@ export default function PanduanPage() {
             </ul>
           </section>
         </div>
-      </main>
+      </div>
     );
   }
 
   const panduanLain = PANDUAN.filter((p) => p.slug !== panduan.slug);
 
   return (
-    <main className="min-h-screen bg-black text-zinc-100">
+    <div className="min-h-screen bg-black text-zinc-100">
       <div className="mx-auto w-full max-w-2xl px-5 pb-16 pt-10 sm:pt-14">
         <nav aria-label="Navigasi panduan">
           <Link
@@ -188,6 +188,6 @@ export default function PanduanPage() {
           </ul>
         </nav>
       </div>
-    </main>
+    </div>
   );
 }

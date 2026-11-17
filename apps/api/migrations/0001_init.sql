@@ -18,7 +18,7 @@ CREATE INDEX IF NOT EXISTS idx_profiles_dibuat_pada ON profiles (dibuat_pada);
 -- health_checks: hasil pemeriksaan kesehatan HP.
 -- ringkasan disimpan sebagai JSON (teks).
 -- deleted_at NULL berarti baris aktif (soft delete untuk sinkronisasi).
--- sync_status: pending | synced | conflict.
+-- sync_status: pending | synced | failed.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS health_checks (
   id TEXT PRIMARY KEY,

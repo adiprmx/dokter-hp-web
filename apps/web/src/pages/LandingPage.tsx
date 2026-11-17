@@ -40,7 +40,7 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-black text-zinc-100">
+    <div className="min-h-screen bg-black text-zinc-100">
       <div className="mx-auto w-full max-w-2xl px-5 pb-16 pt-10 sm:pt-14">
         <header>
           <h1
@@ -176,6 +176,6 @@ export default function LandingPage() {
           </p>
         </footer>
       </div>
-    </main>
+    </div>
   );
 }

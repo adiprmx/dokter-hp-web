@@ -4,22 +4,23 @@
 //
 // Acuan:
 // - PRODUCT.md 4.4 (tes unduh 1 MB, timeout 15 detik, klasifikasi)
-// - docs/api-contracts.md 4 (klasifikasi), 7.2 (GET /ping),
-//   7.3 (info file tes)
+// - docs/api-contracts.md 4 (klasifikasi), 8.2 (GET /ping),
+//   8.3 (info file tes)
 // - docs/copy.md 5 (teks klasifikasi dan tes bertahan)
 // - docs/performance.md 3.6 (file tes no-store; cache-buster +
 //   cache: "no-store" agar hasil ukur nyata, bukan dari cache)
 //
 // File tes disajikan sebagai aset statis dari origin yang sama
-// (/speedtest/1mb.bin, 1.048.576 byte) — lihat
-// apps/web/public/speedtest/1mb.bin.
+// (/speedtest-1mb.bin, 1.048.576 byte, K-27) — lihat
+// apps/web/public/speedtest-1mb.bin. Service worker tidak pernah
+// men-cache file ini (public/sw.js, SPEEDTEST_PATH).
 
 // ------------------------------------------------------------------
 // Konstanta
 // ------------------------------------------------------------------
 
 /** Path file tes di origin frontend (aset statis Pages/Vercel). */
-export const FILE_TES_KECEPATAN = "/speedtest/1mb.bin";
+export const FILE_TES_KECEPATAN = "/speedtest-1mb.bin";
 
 /** Ukuran file tes dalam byte (1 MB = 1.048.576 byte). */
 export const UKURAN_FILE_TES_BYTE = 1048576;

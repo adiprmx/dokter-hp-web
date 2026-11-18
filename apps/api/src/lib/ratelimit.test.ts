@@ -41,7 +41,10 @@ describe('jendelaHarian / jendelaMenit', () => {
 describe('cekDanCatat', () => {
   it('mengizinkan sampai batas, menolak setelahnya tanpa menambah hitungan', async () => {
     const db = new FakeD1({});
-    const jendela = jendelaMenit('tulis', 'user-1', new Date('2026-11-18T10:30:00.000Z'));
+    // K-91: tanggal dinamis (tanggal tetap 2026-11-18T10:30
+    // kedaluwarsa 10:31 UTC — pembersihan malas menghapus baris
+    // yang baru dibuat cekDanCatat).
+    const jendela = jendelaMenit('tulis', 'user-1', new Date());
     for (let i = 1; i <= 3; i++) {
       const s = await cekDanCatat(db, jendela, 3);
       expect(s.diizinkan).toBe(true);
@@ -59,7 +62,7 @@ describe('cekDanCatat', () => {
 
   it('burst 20 paralel meloloskan tepat batas, tanpa over-rejection (regresi R-03)', async () => {
     const db = new FakeD1({});
-    const jendela = jendelaMenit('oauth', '203.0.113.9', new Date('2026-11-18T10:30:00.000Z'));
+    const jendela = jendelaMenit('oauth', '203.0.113.9', new Date());
     const hasil = await Promise.all(
       Array.from({ length: 20 }, () => cekDanCatat(db, jendela, 10)),
     );
@@ -112,8 +115,8 @@ describe('cekDanCatat', () => {
 
   it('jendela baru memberi hitungan segar', async () => {
     const db = new FakeD1({});
-    const j1 = jendelaMenit('tulis', 'user-1', new Date('2026-11-18T10:30:00.000Z'));
-    const j2 = jendelaMenit('tulis', 'user-1', new Date('2026-11-18T10:31:00.000Z'));
+    const j1 = jendelaMenit('tulis', 'user-1', new Date());
+    const j2 = jendelaMenit('tulis', 'user-1', new Date(Date.now() + 60_000));
     expect((await cekDanCatat(db, j1, 1)).diizinkan).toBe(true);
     expect((await cekDanCatat(db, j1, 1)).diizinkan).toBe(false);
     expect((await cekDanCatat(db, j2, 1)).diizinkan).toBe(true);
@@ -121,7 +124,7 @@ describe('cekDanCatat', () => {
 
   it('hitungan terisolasi per pengguna dan per cakupan', async () => {
     const db = new FakeD1({});
-    const sekarang = new Date('2026-11-18T10:30:00.000Z');
+    const sekarang = new Date();
     const a = jendelaMenit('tulis', 'user-a', sekarang);
     const b = jendelaMenit('tulis', 'user-b', sekarang);
     const c = jendelaMenit('baca', 'user-a', sekarang);
@@ -142,7 +145,10 @@ describe('cekDanCatat', () => {
 describe('catatEkspor (5/hari, K-42/K-59)', () => {
   it('5 ekspor pertama diizinkan, ke-6 ditolak', async () => {
     const db = new FakeD1({});
-    const sekarang = new Date('2026-11-18T10:00:00.000Z');
+    const sekarang = new Date();
+    const besok = new Date(
+      Date.UTC(sekarang.getUTCFullYear(), sekarang.getUTCMonth(), sekarang.getUTCDate() + 1),
+    );
     for (let i = 1; i <= 5; i++) {
       const { status } = await catatEkspor(db, 'user-1', sekarang);
       expect(status.diizinkan).toBe(true);
@@ -151,13 +157,13 @@ describe('catatEkspor (5/hari, K-42/K-59)', () => {
     const { status, jendela } = await catatEkspor(db, 'user-1', sekarang);
     expect(status.diizinkan).toBe(false);
     expect(status.sisa).toBe(0);
-    expect(jendela.kedaluwarsa).toBe('2026-11-19T00:00:00.000Z');
+    expect(jendela.kedaluwarsa).toBe(besok.toISOString());
   });
 
   it('kuota ekspor pulih keesokan harinya', async () => {
     const db = new FakeD1({});
-    const hari1 = new Date('2026-11-18T23:00:00.000Z');
-    const hari2 = new Date('2026-11-19T00:30:00.000Z');
+    const hari1 = new Date();
+    const hari2 = new Date(hari1.getTime() + 24 * 60 * 60 * 1000);
     for (let i = 0; i < 5; i++) {
       expect((await catatEkspor(db, 'user-1', hari1)).status.diizinkan).toBe(true);
     }

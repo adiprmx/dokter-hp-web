@@ -415,47 +415,53 @@ describe('rate limit AI (20/hari per pengguna)', () => {
 });
 
 describe('cadangan kuota AI (reserve-then-confirm, R-05)', () => {
-  const SEKARANG = new Date('2026-11-17T10:00:00.000Z');
+  // K-91: tanggal DINAMIS — tanggal tetap membuat baris
+  // rate_limits kedaluwarsa keesokan harinya, lalu pembersihan
+  // malas cekDanCatat (jam dinding nyata) menghapus baris yang
+  // baru dibuatnya sendiri (2 tes gagal 00:06 UTC 18 Nov 2026).
+  const SEKARANG = new Date();
+  const HARI = SEKARANG.toISOString().slice(0, 10);
+  const KUNCI = `ai:user-1:${HARI}`;
 
   it('cadangan menaikkan penghitung dan mengembalikan status sesudah cadangan', async () => {
     const db = buatMockDb({});
     const { status, jendela } = await cadangkanKuotaAi(db, 'user-1', SEKARANG);
     expect(status).toEqual({ diizinkan: true, terpakai: 1, batas: 20, sisa: 19 });
-    expect(jendela.kunci).toBe('ai:user-1:2026-11-17');
-    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(1);
+    expect(jendela.kunci).toBe(KUNCI);
+    expect(db.batasLaju.get(KUNCI)?.jumlah).toBe(1);
   });
 
   it('cadangan ke-21 ditolak dan TIDAK menaikkan penghitung', async () => {
     const db = buatMockDb({
-      rateLimits: [{ kunci: 'ai:user-1:2026-11-17', jumlah: 20 }],
+      rateLimits: [{ kunci: KUNCI, jumlah: 20 }],
     });
     const { status } = await cadangkanKuotaAi(db, 'user-1', SEKARANG);
     expect(status.diizinkan).toBe(false);
     expect(status.terpakai).toBe(20);
-    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(20);
+    expect(db.batasLaju.get(KUNCI)?.jumlah).toBe(20);
   });
 
   it('pelepasan cadangan mengembalikan satu kuota, tidak di bawah 0', async () => {
     const db = buatMockDb({
-      rateLimits: [{ kunci: 'ai:user-1:2026-11-17', jumlah: 1 }],
+      rateLimits: [{ kunci: KUNCI, jumlah: 1 }],
     });
     const jendela = jendelaKuotaAi('user-1', SEKARANG);
     await lepaskanKuotaAi(db, jendela);
-    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(0);
+    expect(db.batasLaju.get(KUNCI)?.jumlah).toBe(0);
     await lepaskanKuotaAi(db, jendela);
-    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(0);
+    expect(db.batasLaju.get(KUNCI)?.jumlah).toBe(0);
   });
 
   it('burst 20 paralel dari 19 terpakai: tepat 1 diizinkan (regresi TOCTOU R-05)', async () => {
     const db = buatMockDb({
-      rateLimits: [{ kunci: 'ai:user-1:2026-11-17', jumlah: 19 }],
+      rateLimits: [{ kunci: KUNCI, jumlah: 19 }],
     });
     const hasil = await Promise.all(
       Array.from({ length: 20 }, () => cadangkanKuotaAi(db, 'user-1', SEKARANG)),
     );
     const diizinkan = hasil.filter((h) => h.status.diizinkan);
     expect(diizinkan).toHaveLength(1);
-    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(20);
+    expect(db.batasLaju.get(KUNCI)?.jumlah).toBe(20);
   });
 
   it('burst 25 paralel dari 0: tepat 20 diizinkan', async () => {
@@ -465,7 +471,7 @@ describe('cadangan kuota AI (reserve-then-confirm, R-05)', () => {
     );
     const diizinkan = hasil.filter((h) => h.status.diizinkan);
     expect(diizinkan).toHaveLength(20);
-    expect(db.batasLaju.get('ai:user-1:2026-11-17')?.jumlah).toBe(20);
+    expect(db.batasLaju.get(KUNCI)?.jumlah).toBe(20);
   });
 });
 

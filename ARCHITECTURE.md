@@ -708,9 +708,10 @@ bahasa sehari-hari ("Terlalu sering, coba lagi sebentar").
   `Permissions-Policy: camera=(), microphone=(),
   geolocation=()`. Header Pages (`apps/web/public/_headers`)
   memakai CSP yang sama ditambah `connect-src` ke origin API
-  (saat ini wildcard `https://*.workers.dev` sebagai
-  placeholder — WAJIB dipersempit ke origin API persis setelah
-  deploy, lihat `docs/deploy.md` §4.4).
+  persis `https://dokter-hp-api.hiroohengkerr.workers.dev`
+  (K-78, snapshot 4 — wildcard `https://*.workers.dev` yang
+  dulu dipakai sebagai placeholder sudah dihapus; runbook
+  `docs/deploy.md` §4.4).
 - **PIN**: hash HMAC-SHA256 dengan pepper secret `PIN_PEPPER`
   + salt per pengguna (K-71); PIN lemah ditolak (K-70d);
   ubah/hapus PIN wajib PIN lama bila PIN sudah diatur, kecuali
@@ -818,13 +819,15 @@ membuka ulang temuan yang sama tanpa bukti baru.
   sendiri (`rate_limits` per jendela, `ai_cache` 7 hari).
   Baris `rate_limits` per pengguna (`%:userId:%`) DIHAPUS
   saat hapus akun.
-- **R-08 (sisa) — wildcard `connect-src` di Pages.**
-  `apps/web/public/_headers` memakai `connect-src 'self'
-  https://*.workers.dev` sebagai placeholder sampai subdomain
-  API diketahui. Sisa risiko: halaman bisa memanggil Worker
-  lain di `*.workers.dev` — dampak terbatas (tanpa kredensial
-  yang dibagikan ke origin lain), dan WAJIB dipersempit ke
-  origin API persis setelah deploy (`docs/deploy.md` §4.4).
+- **R-08 (DITUTUP, K-78, snapshot 4) — wildcard `connect-src`
+  di Pages.** `apps/web/public/_headers` DULU memakai
+  `connect-src 'self' https://*.workers.dev` sebagai
+  placeholder sampai subdomain API diketahui; kini dipersempit
+  ke origin API persis
+  `https://dokter-hp-api.hiroohengkerr.workers.dev`
+  (terverifikasi dari header live). Risiko sisa wildcard
+  (halaman bisa memanggil Worker lain di `*.workers.dev`)
+  sudah tidak berlaku.
 
 ## 10. Catatan rekonsiliasi
 

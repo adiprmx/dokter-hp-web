@@ -3,18 +3,18 @@ name = "dokter-hp-api"
 main = "src/index.ts"
 compatibility_date = "2026-11-17"
 
-# Database D1. ID di bawah ini adalah PLACEHOLDER — tim deploy wajib
-# menggantinya dengan ID asli dari `wrangler d1 create dokter-hp-db`
-# sebelum deploy pertama. Pengembangan lokal (wrangler dev) memakai
-# D1 lokal dan menerapkan migrasi dari folder migrations/ secara otomatis.
+# Database D1 (Wave 5: ID asli dari `wrangler d1 create dokter-hp-db`,
+# database produksi `dokter-hp-db`, 11 tabel, migrasi 0001–0004).
+# Pengembangan lokal (wrangler dev) memakai D1 lokal dan menerapkan
+# migrasi dari folder migrations/ secara otomatis.
 [[d1_databases]]
 binding = "DB"
 database_name = "dokter-hp-db"
 database_id = "6b43e7b2-ab24-48a4-abf9-ff8cae97f397"
 migrations_dir = "migrations"
 
-# KV minimal (misal: pembatas laju, cache singkat). ID placeholder —
-# ganti dengan ID asli dari `wrangler kv namespace create KV` bila dipakai.
+# KV minimal (misal: pembatas laju, cache singkat). ID asli dari
+# `wrangler kv namespace create KV` (Wave 5).
 [[kv_namespaces]]
 binding = "KV"
 id = "347a1871fb464e92ac7e1e079134a062"

@@ -22,12 +22,15 @@ id = "347a1871fb464e92ac7e1e079134a062"
 # Variabel lingkungan NON-RAHASIA (K-73, K-08). Nilai di bawah ini
 # adalah PLACEHOLDER yang mengarah ke domain Pages produksi; tim
 # deploy WAJIB menggantinya dengan domain sebenarnya sebelum deploy
-# pertama. Secret (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
-# GEMINI_API_KEY, PIN_PEPPER) TIDAK PERNAH ditulis di sini — atur
-# lewat `wrangler secret put`. GOOGLE_REDIRECT_URI bukan rahasia
-# (terlihat di URL OAuth) sehingga boleh di [vars] sebagai placeholder.
+# pertama. Secret (GOOGLE_CLIENT_SECRET, GEMINI_API_KEY,
+# PIN_PEPPER) TIDAK PERNAH ditulis di sini — atur lewat
+# `wrangler secret put`. GOOGLE_CLIENT_ID bersifat PUBLIK (K-77)
+# dan GOOGLE_REDIRECT_URI bukan rahasia (terlihat di URL OAuth),
+# sehingga keduanya boleh di [vars]. (Wave 5 snapshot 7: client
+# ID ditambah ke [vars].)
 [vars]
 ALLOWED_ORIGIN = "https://dokter-hp-web.pages.dev,https://dokter-hp-web.vercel.app"
 FRONTEND_URL = "https://dokter-hp-web.pages.dev"
 GOOGLE_REDIRECT_URI = "https://dokter-hp-api.hiroohengkerr.workers.dev/api/auth/google/callback"
+GOOGLE_CLIENT_ID = "68799972715-ia1jo7fteo89a4ti14dpak6dvg3dnfar.apps.googleusercontent.com"
 GEMINI_MODEL = "gemini-3.5-flash-lite"

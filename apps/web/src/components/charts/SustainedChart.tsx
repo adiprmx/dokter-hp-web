@@ -26,16 +26,31 @@
 //   Helper yang diekspor dan boleh dipakai ulang di /wifi:
 //   - formatKecepatan(kbps): "52 KB/detik" / "1,2 MB/detik".
 //   - ringkasanBertahan(sampel): { stabil, awalKbps, akhirKbps, jumlahSampel }
-//     untuk teks hasil di luar grafik.
+//     untuk angka awal/akhir di luar grafik. Kalimat hasil grafik memakai
+//     verdict kanonis lib/speedtest.ts (lihat komponen di bawah).
 //
 // Aturan stabil/jatuh (didokumentasikan di sini; bukan dari kontrak API):
 // bandingkan rata-rata 5 sampel pertama dengan rata-rata 5 sampel terakhir;
 // "jatuh" bila kecepatan akhir di bawah 70% kecepatan awal.
+// "stabil" mensyaratkan kecepatan awal terukur (> 0): awal 0 bukan bukti
+// stabil, karena tidak ada kecepatan yang bertahan (K-94 Wave 3a).
+//
+// Warna (redesign v2.0 §4/§9): garis, titik, dan zona di bawah garis
+// memakai warna status dari verdict kanonis lib/speedtest.ts
+// (nilaiTesBertahan — fungsi yang sama dipakai halaman /wifi, sehingga
+// warna grafik tidak pernah bertentangan dengan teks verdict halaman):
+// bertahan hijau, tidak-stabil kuning, jatuh merah. Garis putus-putus
+// menandai ambang jatuh (70% kecepatan awal) agar aturan "jatuh" yang
+// dipakai ringkasan terlihat di grafik, bukan tersembunyi di kode.
+// Warna selalu berpasangan dengan label verdict berteks di atas grafik.
 // ============================================================================
 //
 // Aksesibilitas (a11y.md 6.4): grafik disertai ringkasan teks yang terlihat
 // (stabil/jatuh + kecepatan awal/akhir) DAN tabel data sr-only berisi semua
 // sampel. SVG memakai role="img" dengan aria-label yang meringkas data.
+
+import { nilaiTesBertahan, type VerdictBertahan } from "../../lib/speedtest";
+import { statusDariVerdict, tokenStatus } from "../../lib/status-warna";
 
 export interface SampelKecepatan {
   /** Detik ke-berapa sampel ini diambil (0 sampai durasi tes - 1). */
@@ -52,7 +67,7 @@ export interface SustainedChartProps {
 }
 
 export interface RingkasanBertahan {
-  /** true bila kecepatan bertahan (akhir >= 70% awal). */
+  /** true bila kecepatan bertahan (awal terukur > 0 dan akhir >= 70% awal). */
   stabil: boolean;
   /** Rata-rata kecepatan 5 sampel pertama (KB/detik). */
   awalKbps: number;
@@ -77,6 +92,13 @@ const formatAngkaSatuDesimal = new Intl.NumberFormat("id-ID", {
   maximumFractionDigits: 1,
 });
 
+/** Label verdict untuk ditampilkan bersama warna statusnya (spec §4). */
+const LABEL_VERDICT: Record<VerdictBertahan, string> = {
+  bertahan: "Bertahan",
+  "tidak-stabil": "Tidak stabil",
+  jatuh: "Jatuh",
+};
+
 /**
  * Format kecepatan untuk tampilan: di bawah 1.000 KB/detik tampil sebagai
  * "KB/detik", sisanya sebagai "MB/detik" (1 MB = 1.000 KB, sesuai pemakaian
@@ -96,10 +118,19 @@ export function formatKecepatan(kecepatanKbps: number): string {
   return `${formatAngkaSatuDesimal.format(kecepatanKbps / 1000)} MB/detik`;
 }
 
-/** Label pendek kecepatan untuk sumbu tegak ("500 KB" / "1,2 MB"). */
+/**
+ * Label pendek kecepatan untuk sumbu tegak ("500 KB" / "1,2 MB").
+ * Di bawah 100 memakai satu desimal (sama seperti formatKecepatan) agar
+ * label sumbu tidak kembar: untuk maks 0, tick 0 / 0,5 / 1 wajib tampil
+ * "0 KB" / "0,5 KB" / "1 KB", bukan "1 KB" dua kali.
+ */
 function formatSumbuKecepatan(kecepatanKbps: number): string {
   if (kecepatanKbps < 1000) {
-    return `${formatAngka.format(Math.round(kecepatanKbps))} KB`;
+    const nilai =
+      kecepatanKbps >= 100
+        ? Math.round(kecepatanKbps)
+        : Math.round(kecepatanKbps * 10) / 10;
+    return `${formatAngka.format(nilai)} KB`;
   }
   return `${formatAngkaSatuDesimal.format(kecepatanKbps / 1000)} MB`;
 }
@@ -113,6 +144,9 @@ function rataRata(nilai: number[]): number {
  * Analisis stabil/jatuh dari sampel. Mengembalikan null bila tidak ada
  * sampel valid. Perbandingan memakai rata-rata 5 sampel pertama vs 5
  * sampel terakhir agar satu sampel sesaat tidak mengubah hasil.
+ * Awal 0 (tidak ada kecepatan terukur di 5 detik pertama) bukan bukti
+ * stabil, karena tidak ada kecepatan yang bertahan. Jadi stabil
+ * bernilai false bila awal <= 0.
  */
 export function ringkasanBertahan(
   sampel: SampelKecepatan[],
@@ -129,7 +163,7 @@ export function ringkasanBertahan(
   const awalKbps = rataRata(valid.slice(0, 5).map((s) => s.kecepatanKbps));
   const akhirKbps = rataRata(valid.slice(-5).map((s) => s.kecepatanKbps));
   return {
-    stabil: awalKbps <= 0 ? true : akhirKbps >= awalKbps * AMBANG_JATUH,
+    stabil: awalKbps <= 0 ? false : akhirKbps >= awalKbps * AMBANG_JATUH,
     awalKbps,
     akhirKbps,
     jumlahSampel: valid.length,
@@ -177,6 +211,17 @@ export function SustainedChart({ sampel, durasiDetik = 30 }: SustainedChartProps
   const maksKbps = batasAtasSumbu(
     Math.max(...titik.map((t) => t.kecepatanKbps)),
   );
+
+  // Verdict kanonis (fungsi yang sama dipakai halaman /wifi) menggerakkan
+  // warna DAN kalimat hasil, agar keduanya tidak pernah bertentangan:
+  // kecepatan konstan 500 KB/detik adalah "tidak-stabil" menurut verdict
+  // (rata-rata < 1000) walau lolos aturan 70% ringkasanBertahan.
+  // ringkasanBertahan tetap memasok angka awal/akhir di bawah.
+  const verdict = nilaiTesBertahan(titik.map((t) => t.kecepatanKbps)).verdict;
+  const token = tokenStatus(statusDariVerdict(verdict));
+  // Ambang jatuh: 70% kecepatan awal (aturan yang sama dipakai ringkasan).
+  const ambangKbps = ringkasan.awalKbps * AMBANG_JATUH;
+
   const lebarGrafik = LEBAR - PAD_KIRI - PAD_KANAN;
   const tinggiGrafik = TINGGI - PAD_ATAS - PAD_BAWAH;
   const posisiX = (detikKe: number) =>
@@ -188,18 +233,44 @@ export function SustainedChart({ sampel, durasiDetik = 30 }: SustainedChartProps
       (t) => `${posisiX(t.detikKe).toFixed(1)},${posisiY(t.kecepatanKbps).toFixed(1)}`,
     )
     .join(" ");
+  // Zona di bawah garis: poligon dari titik-titik garis turun ke sumbu 0.
+  const areaPoints =
+    titik.length > 1
+      ? `${points} ${posisiX(titik[titik.length - 1].detikKe).toFixed(1)},${posisiY(0).toFixed(1)} ${posisiX(titik[0].detikKe).toFixed(1)},${posisiY(0).toFixed(1)}`
+      : "";
 
-  // Kalimat hasil memakai teks final docs/copy.md §5 (tes bertahan).
-  const kalimatHasil = ringkasan.stabil
-    ? `Kecepatan stabil selama ${durasiDetik} detik.`
-    : `Kecepatan mulai ${formatKecepatan(ringkasan.awalKbps)} lalu jatuh ke ${formatKecepatan(ringkasan.akhirKbps)}. Pola seperti ini biasanya berasal dari router atau jaringan, bukan dari HP.`;
+  // Kalimat hasil memakai teks final docs/copy.md §5 (tes bertahan),
+  // dipilih dari verdict kanonis, bukan dari ringkasan.stabil, agar
+  // kalimat dan label verdict selalu sepakat. Kalimat tidak-stabil sama
+  // dengan teksVerdict halaman /wifi.
+  const kalimatHasil =
+    verdict === "bertahan"
+      ? `Kecepatan stabil selama ${durasiDetik} detik.`
+      : verdict === "jatuh"
+        ? `Kecepatan mulai ${formatKecepatan(ringkasan.awalKbps)} lalu jatuh ke ${formatKecepatan(ringkasan.akhirKbps)}. Pola seperti ini biasanya berasal dari router atau jaringan, bukan dari HP.`
+        : `Kecepatan tidak stabil selama ${durasiDetik} detik. Coba tes lagi saat jaringan tidak dipakai perangkat lain.`;
   const kalimatAwalAkhir = `Kecepatan awal ${formatKecepatan(ringkasan.awalKbps)}, kecepatan akhir ${formatKecepatan(ringkasan.akhirKbps)}.`;
-  const labelGrafik = `Grafik kecepatan per detik selama ${durasiDetik} detik, ${ringkasan.jumlahSampel} sampel. ${kalimatHasil} ${kalimatAwalAkhir}`;
+  const kalimatAmbang =
+    ambangKbps > 0
+      ? ` Garis putus-putus menandai 70% kecepatan awal (${formatKecepatan(ambangKbps)}).`
+      : "";
+  const labelGrafik = `Grafik kecepatan per detik selama ${durasiDetik} detik, ${ringkasan.jumlahSampel} sampel. ${kalimatHasil} ${kalimatAwalAkhir}${kalimatAmbang}`;
 
   const tengahDetik = Math.round(durasiDetik / 2);
 
   return (
     <div>
+      <p
+        className="mb-2 flex items-center gap-2 text-sm font-medium"
+        style={{ color: token.teks }}
+      >
+        <span
+          aria-hidden="true"
+          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: token.teks }}
+        />
+        {LABEL_VERDICT[verdict]}
+      </p>
       <svg
         viewBox={`0 0 ${LEBAR} ${TINGGI}`}
         className="h-auto w-full"
@@ -227,11 +298,46 @@ export function SustainedChart({ sampel, durasiDetik = 30 }: SustainedChartProps
             </text>
           </g>
         ))}
+        {ambangKbps > 0 ? (
+          <g>
+            <line
+              x1={PAD_KIRI}
+              x2={LEBAR - PAD_KANAN}
+              y1={posisiY(ambangKbps)}
+              y2={posisiY(ambangKbps)}
+              stroke="var(--color-border-strong)"
+              strokeWidth="1"
+              strokeDasharray="4 3"
+            />
+            {/* Latar di belakang label agar tetap terbaca bila garis
+                data lewat di dekat garis ambang (jatuh, layar sempit). */}
+            <rect
+              x={PAD_KIRI + 2}
+              y={posisiY(ambangKbps) - 16}
+              width={104}
+              height={14}
+              rx={2}
+              fill="var(--color-surface)"
+            />
+            <text
+              x={PAD_KIRI + 4}
+              y={posisiY(ambangKbps) - 5}
+              textAnchor="start"
+              fontSize={10}
+              fill="var(--color-text-muted)"
+            >
+              70% kecepatan awal
+            </text>
+          </g>
+        ) : null}
+        {titik.length > 1 ? (
+          <polygon points={areaPoints} fill={token.latar} />
+        ) : null}
         {titik.length > 1 ? (
           <polyline
             points={points}
             fill="none"
-            stroke="#ffffff"
+            stroke={token.teks}
             strokeWidth="2"
             strokeLinejoin="round"
             strokeLinecap="round"
@@ -243,7 +349,7 @@ export function SustainedChart({ sampel, durasiDetik = 30 }: SustainedChartProps
             cx={posisiX(t.detikKe)}
             cy={posisiY(t.kecepatanKbps)}
             r="2.5"
-            fill="#ffffff"
+            fill={token.teks}
           />
         ))}
         <text

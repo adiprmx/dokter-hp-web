@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ambilRiwayatDokter,
   buatBodiPenyimpanan,
+  formatTanggalWaktu,
   hapusEntriDokter,
   hitungPersenPenyimpanan,
   hitungRuangKosongGb,
+  klasifikasiPenyimpanan,
   parseAngka,
-  penyimpananHampirPenuh,
   pesanGalatHapus,
   pesanGalatMuat,
   pesanGalatSimpan,
@@ -15,16 +16,23 @@ import {
   type EntriPenyimpanan,
 } from "../lib/doctor";
 import {
+  labelStatus,
+  statusDariDoctor,
+  tokenStatus,
+} from "../lib/status-warna";
+import {
   DoctorEntryForm,
   KELAS_TOMBOL_PRIMER,
   KELAS_TOMBOL_SEKUNDER,
   type DoctorField,
   type DoctorFormValues,
 } from "../components/doctor/DoctorEntryForm";
-import {
-  DoctorEmptyState,
-  DoctorHistoryList,
-} from "../components/doctor/DoctorHistoryList";
+import { DoctorHistoryList } from "../components/doctor/DoctorHistoryList";
+import { StorageBar } from "../components/charts/StorageBar";
+import { Card } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { Skeleton } from "../components/ui/Skeleton";
+import { StatusBadge } from "../components/ui/StatusBadge";
 
 const FIELDS_PENYIMPANAN: DoctorField[] = [
   {
@@ -47,6 +55,10 @@ const FIELDS_PENYIMPANAN: DoctorField[] = [
   },
 ];
 
+// Satu GB dalam byte: StorageBar menerima byte, halaman ini bekerja
+// dalam GB (satuan yang dicatat pengguna).
+const GB_KE_BYTE = 1024 ** 3;
+
 type StatusMuat = "memuat" | "siap" | "galat";
 
 function formatGb(nilai: number): string {
@@ -57,64 +69,21 @@ function formatPersen(nilai: number): string {
   return nilai.toLocaleString("id-ID", { maximumFractionDigits: 1 });
 }
 
-// Bilah pemakaian penyimpanan sederhana (dibuat di file ini karena
-// components/charts/StorageBar belum ada — lihat laporan akhir).
-// Nilai persen dan angka tampil sebagai teks; bilah memakai
-// role="progressbar" (a11y.md 6.4).
-function BilahPenyimpanan({
-  persen,
-  totalGb,
-  terpakaiGb,
-  kosongGb,
-}: {
-  persen: number;
-  totalGb: number;
-  terpakaiGb: number;
-  kosongGb: number;
-}) {
-  const lebar = Math.min(100, Math.max(0, persen));
-  const hampirPenuh = penyimpananHampirPenuh(persen);
-  return (
-    <div>
-      <div
-        role="progressbar"
-        aria-valuenow={Math.round(persen)}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label="Penyimpanan terpakai"
-        className="h-3 w-full overflow-hidden rounded-full bg-[#27272a]"
-      >
-        <div
-          aria-hidden="true"
-          className={`h-full rounded-full ${
-            hampirPenuh ? "bg-[var(--color-error)]" : "bg-white"
-          }`}
-          style={{ width: `${lebar}%` }}
-        />
-      </div>
-      <p className="mt-3 text-sm leading-relaxed text-[var(--color-text-primary)]">
-        <span className="dh-numeric font-semibold">
-          {formatGb(terpakaiGb)} GB
-        </span>{" "}
-        dari{" "}
-        <span className="dh-numeric font-semibold">{formatGb(totalGb)} GB</span>{" "}
-        terpakai (
-        <span className="dh-numeric font-semibold">
-          {formatPersen(persen)}%
-        </span>
-        )
-      </p>
-      <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-        Masih kosong:{" "}
-        <span className="dh-numeric">{formatGb(kosongGb)} GB</span>
-      </p>
-    </div>
-  );
-}
-
 // Dokter Penyimpanan (/penyimpanan): riwayat pemakaian penyimpanan +
 // input manual. Tanpa tombol bersih-bersih: browser tidak bisa
 // membersihkan file di HP (copy.md 7, PRODUCT.md 11).
+//
+// Redesign v2.0 (docs/redesign-v20-spec.md §8.4): strip status
+// berwarna di atas (angka besar + label status + StorageBar),
+// form + riwayat di bawah. Bilah inline v1.0 sudah dihapus:
+// StorageBar adalah satu-satunya tampilan bilah, di bagian utama
+// maupun di tiap entri riwayat. Warna status HANYA lewat
+// statusDariDoctor(klasifikasiPenyimpanan) + tokenStatus.
+// Ambang 70/90 hidup di lib/doctor.ts dan tidak berubah.
+// Peringatan "hampir penuh" tampil di dalam kartu galat (bagian
+// utama memakai status kartu galat saat klasifikasi
+// perlu_perhatian); kalimatnya adalah kalimat kanonis copy.md §7
+// yang ditampilkan StorageBar, jadi tidak diulang kedua kali.
 export default function PenyimpananPage() {
   const judulRef = useRef<HTMLHeadingElement>(null);
   const [entri, setEntri] = useState<EntriPenyimpanan[]>([]);
@@ -216,6 +185,14 @@ export default function PenyimpananPage() {
           entriTerbaruBerangka.detail.terpakaiGb,
         )
       : null;
+  // Status bagian utama: klasifikasi kanonis -> warna lewat helper
+  // status-warna (satu-satunya pemetaan keadaan ke warna).
+  const klasifikasiTerbaru =
+    persenTerbaru !== null ? klasifikasiPenyimpanan(persenTerbaru) : null;
+  const statusTerbaru = klasifikasiTerbaru
+    ? statusDariDoctor(klasifikasiTerbaru)
+    : null;
+  const tokenTerbaru = statusTerbaru ? tokenStatus(statusTerbaru) : null;
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 pb-16 pt-6">
@@ -230,38 +207,36 @@ export default function PenyimpananPage() {
         Pemakaian ruang penyimpanan HP Anda.
       </p>
 
-      <section
-        aria-label="Batasan versi web"
-        className="mt-4 rounded-xl border border-[var(--color-info-border)] bg-[var(--color-info-bg)] p-4"
-      >
+      <Card status="info" className="mt-4">
         <p className="text-sm leading-relaxed text-[var(--color-text-primary)]">
           Versi web tidak bisa membaca penyimpanan HP secara langsung. Data
           di layar ini berasal dari riwayat aplikasi Dokter HP atau dari
           yang Anda isi sendiri. Versi web juga tidak bisa membersihkan
-          file di HP — hapus file yang tidak perlu langsung dari HP.
+          file di HP. Hapus file yang tidak perlu langsung dari HP.
         </p>
         <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-primary)]">
           Cara mencatat: lihat angkanya di Pengaturan &gt; Penyimpanan di
           HP, ketuk Tambah catatan di bawah, lalu salin total dan yang
           terpakai ke sini.
         </p>
-      </section>
+      </Card>
 
       {pesanSukses ? (
-        <p
-          role="status"
-          className="mt-4 rounded-xl border border-[var(--color-success-border)] bg-[var(--color-success-bg)] px-4 py-3 text-sm text-[var(--color-success)]"
-        >
-          {pesanSukses}
-        </p>
+        <Card status="sukses" className="mt-4">
+          <p
+            role="status"
+            className="text-sm text-[var(--color-success)]"
+          >
+            {pesanSukses}
+          </p>
+        </Card>
       ) : null}
       {pesanGalat ? (
-        <p
-          role="alert"
-          className="mt-4 rounded-xl border border-[var(--color-error-border)] bg-[var(--color-error-bg)] px-4 py-3 text-sm text-[var(--color-error)]"
-        >
-          {pesanGalat}
-        </p>
+        <Card status="galat" className="mt-4">
+          <p role="alert" className="text-sm text-[var(--color-error)]">
+            {pesanGalat}
+          </p>
+        </Card>
       ) : null}
 
       <section aria-label="Tambah catatan penyimpanan" className="mt-6">
@@ -275,19 +250,18 @@ export default function PenyimpananPage() {
           {formTerbuka ? "Tutup formulir" : "Tambah catatan"}
         </button>
         {formTerbuka ? (
-          <div
-            id="form-penyimpanan"
-            className="mt-4 rounded-xl bg-[var(--color-surface)] p-4"
-          >
-            <DoctorEntryForm
-              idFormulir="penyimpanan"
-              judul="Isi pemakaian penyimpanan"
-              fields={FIELDS_PENYIMPANAN}
-              validate={validasi}
-              onSubmit={simpan}
-              onBatal={() => setFormTerbuka(false)}
-            />
-          </div>
+          <Card className="mt-4">
+            <div id="form-penyimpanan">
+              <DoctorEntryForm
+                idFormulir="penyimpanan"
+                judul="Isi pemakaian penyimpanan"
+                fields={FIELDS_PENYIMPANAN}
+                validate={validasi}
+                onSubmit={simpan}
+                onBatal={() => setFormTerbuka(false)}
+              />
+            </div>
+          </Card>
         ) : null}
       </section>
 
@@ -295,37 +269,57 @@ export default function PenyimpananPage() {
       entriTerbaruBerangka &&
       persenTerbaru !== null &&
       kosongTerbaru !== null &&
+      statusTerbaru &&
+      tokenTerbaru &&
       entriTerbaruBerangka.detail.totalGb !== undefined &&
       entriTerbaruBerangka.detail.terpakaiGb !== undefined ? (
-        <section
-          aria-labelledby="pemakaian-judul"
-          className="mt-8 rounded-xl bg-[var(--color-surface)] p-4"
-        >
-          <h2
-            id="pemakaian-judul"
-            className="text-lg font-semibold text-[var(--color-text-primary)]"
-          >
-            Pemakaian penyimpanan
-          </h2>
-          <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Catatan terbaru — dari data yang dicatat, bukan pembacaan
-            langsung.
-          </p>
-          <div className="mt-4">
-            <BilahPenyimpanan
-              persen={persenTerbaru}
-              totalGb={entriTerbaruBerangka.detail.totalGb}
-              terpakaiGb={entriTerbaruBerangka.detail.terpakaiGb}
-              kosongGb={kosongTerbaru}
-            />
-          </div>
-          {penyimpananHampirPenuh(persenTerbaru) ? (
-            <p className="mt-4 rounded-lg border border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] px-4 py-3 text-sm leading-relaxed text-[var(--color-warning)]">
-              Penyimpanan hampir penuh. HP bisa terasa berat bila ruang
-              kosong tinggal sedikit. Hapus file atau aplikasi yang tidak
-              dipakai lagi.
+        <section aria-labelledby="pemakaian-judul" className="mt-8">
+          <Card status={statusTerbaru} padding="lg">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2
+                  id="pemakaian-judul"
+                  className="text-lg font-semibold text-[var(--color-text-primary)]"
+                >
+                  Pemakaian penyimpanan
+                </h2>
+                <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+                  Catatan terbaru dari data yang dicatat, bukan pembacaan
+                  langsung.
+                </p>
+              </div>
+              <StatusBadge status={statusTerbaru} dot>
+                {labelStatus(statusTerbaru)}
+              </StatusBadge>
+            </div>
+            <p
+              className="dh-numeric mt-4 text-[length:var(--text-display-lg)] font-bold leading-[var(--leading-display)]"
+              style={{ color: tokenTerbaru.teks }}
+            >
+              {formatPersen(persenTerbaru)}%
             </p>
-          ) : null}
+            <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+              dari{" "}
+              <span className="dh-numeric text-[var(--color-text-primary)]">
+                {formatGb(entriTerbaruBerangka.detail.totalGb)} GB
+              </span>{" "}
+              terpakai
+            </p>
+            <div className="mt-4">
+              <StorageBar
+                terpakai={
+                  entriTerbaruBerangka.detail.terpakaiGb * GB_KE_BYTE
+                }
+                total={entriTerbaruBerangka.detail.totalGb * GB_KE_BYTE}
+              />
+            </div>
+            <p className="mt-3 text-sm text-[var(--color-text-muted)]">
+              Masih kosong:{" "}
+              <span className="dh-numeric text-[var(--color-text-primary)]">
+                {formatGb(kosongTerbaru)} GB
+              </span>
+            </p>
+          </Card>
         </section>
       ) : null}
 
@@ -337,32 +331,44 @@ export default function PenyimpananPage() {
           Riwayat penyimpanan
         </h2>
         {statusMuat === "memuat" ? (
-          <p role="status" className="mt-4 text-sm text-[var(--color-text-muted)]">
-            Mengambil data…
-          </p>
+          <div className="mt-4 flex flex-col gap-3">
+            <p
+              role="status"
+              className="text-sm text-[var(--color-text-muted)]"
+            >
+              Mengambil data…
+            </p>
+            <Skeleton
+              height={118}
+              rounded="lg"
+              label="Memuat riwayat penyimpanan"
+            />
+            <Skeleton
+              height={118}
+              rounded="lg"
+              label="Memuat riwayat penyimpanan"
+            />
+          </div>
         ) : null}
         {statusMuat === "galat" ? (
-          <div className="mt-4 flex flex-col items-start gap-3">
-            <p
-              role="alert"
-              className="text-sm text-[var(--color-error)]"
-            >
+          <Card status="galat" className="mt-4">
+            <p role="alert" className="text-sm text-[var(--color-error)]">
               {galatMuat ?? "Data tidak bisa dimuat. Coba lagi."}
             </p>
             <button
               type="button"
               onClick={() => void muat()}
-              className={KELAS_TOMBOL_SEKUNDER}
+              className={`${KELAS_TOMBOL_SEKUNDER} mt-3`}
             >
               Coba lagi
             </button>
-          </div>
+          </Card>
         ) : null}
         {statusMuat === "siap" && entri.length === 0 ? (
-          <div className="mt-4 rounded-xl bg-[var(--color-surface)]">
-            <DoctorEmptyState
-              judul="Belum ada data penyimpanan"
-              isi="Belum ada riwayat penyimpanan. Isi pemakaian penyimpanan secara manual, atau sinkronkan dari aplikasi Dokter HP di Android."
+          <div className="mt-4">
+            <EmptyState
+              title="Belum ada data penyimpanan"
+              description="Belum ada riwayat penyimpanan. Isi pemakaian penyimpanan secara manual, atau sinkronkan dari aplikasi Dokter HP di Android."
             />
           </div>
         ) : null}
@@ -386,35 +392,54 @@ export default function PenyimpananPage() {
                 if (total === undefined && terpakai === undefined) {
                   return <p>tidak tersedia</p>;
                 }
+                // Angka tidak lengkap atau tidak valid (misalnya
+                // terpakai melebihi total): tampilkan teks apa
+                // adanya seperti v1.0, tanpa bilah.
+                if (
+                  persen === null ||
+                  total === undefined ||
+                  terpakai === undefined
+                ) {
+                  return (
+                    <>
+                      <p>
+                        Total penyimpanan:{" "}
+                        <span className="dh-numeric font-semibold">
+                          {total !== undefined
+                            ? `${formatGb(total)} GB`
+                            : "tidak tersedia"}
+                        </span>
+                      </p>
+                      <p>
+                        Terpakai:{" "}
+                        <span className="dh-numeric font-semibold">
+                          {terpakai !== undefined
+                            ? `${formatGb(terpakai)} GB`
+                            : "tidak tersedia"}
+                        </span>
+                      </p>
+                      <p>
+                        Masih kosong:{" "}
+                        <span className="dh-numeric font-semibold">
+                          {kosong !== null
+                            ? `${formatGb(kosong)} GB`
+                            : "tidak tersedia"}
+                        </span>
+                      </p>
+                    </>
+                  );
+                }
+                // Angka lengkap: bilah status yang sama dengan
+                // bagian utama, supaya tiap kartu riwayat membawa
+                // warnanya sendiri.
                 return (
                   <>
-                    <p>
-                      Total penyimpanan:{" "}
-                      <span className="dh-numeric font-semibold">
-                        {total !== undefined
-                          ? `${formatGb(total)} GB`
-                          : "tidak tersedia"}
-                      </span>
-                    </p>
-                    <p>
-                      Terpakai:{" "}
-                      <span className="dh-numeric font-semibold">
-                        {terpakai !== undefined
-                          ? `${formatGb(terpakai)} GB`
-                          : "tidak tersedia"}
-                      </span>
-                      {persen !== null ? (
-                        <>
-                          {" "}
-                          (
-                          <span className="dh-numeric">
-                            {formatPersen(persen)}%
-                          </span>
-                          )
-                        </>
-                      ) : null}
-                    </p>
-                    <p>
+                    <StorageBar
+                      terpakai={terpakai * GB_KE_BYTE}
+                      total={total * GB_KE_BYTE}
+                      label={`Penyimpanan terpakai, catatan ${formatTanggalWaktu(item.dibuatPada)}`}
+                    />
+                    <p className="mt-1">
                       Masih kosong:{" "}
                       <span className="dh-numeric font-semibold">
                         {kosong !== null

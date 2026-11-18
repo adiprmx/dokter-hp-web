@@ -161,10 +161,10 @@ describe("kategoriSkor", () => {
   it("mengategorikan skor pada ambang yang benar", () => {
     expect(kategoriSkor(100)).toBe("Baik");
     expect(kategoriSkor(80)).toBe("Baik");
-    expect(kategoriSkor(79)).toBe("Cukup");
-    expect(kategoriSkor(50)).toBe("Cukup");
-    expect(kategoriSkor(49)).toBe("Perlu perhatian");
-    expect(kategoriSkor(0)).toBe("Perlu perhatian");
+    expect(kategoriSkor(79)).toBe("Perlu diperhatikan");
+    expect(kategoriSkor(50)).toBe("Perlu diperhatikan");
+    expect(kategoriSkor(49)).toBe("Bermasalah");
+    expect(kategoriSkor(0)).toBe("Bermasalah");
   });
 
   it("mengembalikan 'tidak tersedia' untuk skor tidak valid", () => {
@@ -176,8 +176,8 @@ describe("kategoriSkor", () => {
 describe("labelStatusKomponen", () => {
   it("memetakan status yang dikenal", () => {
     expect(labelStatusKomponen("baik")).toBe("Baik");
-    expect(labelStatusKomponen("cukup")).toBe("Cukup");
-    expect(labelStatusKomponen("perlu_perhatian")).toBe("Perlu perhatian");
+    expect(labelStatusKomponen("cukup")).toBe("Perlu diperhatikan");
+    expect(labelStatusKomponen("perlu_perhatian")).toBe("Bermasalah");
   });
 
   it("mengembalikan 'tidak tersedia' untuk status tidak dikenal", () => {
@@ -240,11 +240,11 @@ describe("ringkasPemeriksaanTerakhir", () => {
     );
     expect(hasil).toEqual({
       skorTeks: "78 dari 100",
-      kategori: "Cukup",
+      kategori: "Perlu diperhatikan",
       tanggalTeks: "17 November 2026, 15.30",
       komponen: [
         { label: "WiFi", nilai: "Baik · Skor 85 · Dari tes web" },
-        { label: "Baterai", nilai: "Cukup · Skor 70 · Diisi manual" },
+        { label: "Baterai", nilai: "Perlu diperhatikan · Skor 70 · Diisi manual" },
       ],
     });
   });
@@ -258,7 +258,7 @@ describe("ringkasPemeriksaanTerakhir", () => {
       },
     });
     expect(hasil?.komponen).toEqual([
-      { label: "Performa", nilai: "Perlu perhatian · Dari aplikasi Dokter HP" },
+      { label: "Performa", nilai: "Bermasalah · Dari aplikasi Dokter HP" },
     ]);
   });
 
@@ -273,7 +273,7 @@ describe("ringkasPemeriksaanTerakhir", () => {
       "UTC",
     );
     expect(hasil?.komponen).toEqual([
-      { label: "Performa", nilai: "Perlu perhatian · Dari aplikasi Dokter HP" },
+      { label: "Performa", nilai: "Bermasalah · Dari aplikasi Dokter HP" },
     ]);
   });
 

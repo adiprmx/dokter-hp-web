@@ -23,8 +23,8 @@ Legenda status: ☐ belum dikerjakan · ◐ sedang dikerjakan ·
 | 1.2 | PKCE dipakai (`code_challenge` / `code_verifier`) pada alur OAuth | ☐ | |
 | 1.3 | Parameter `state` acak dibuat per alur login, disimpan di cookie HttpOnly singkat, dan diverifikasi persis di callback; callback dengan `state` tidak cocok ditolak | ☐ | |
 | 1.4 | Redirect URI terdaftar persis di Google Cloud Console; tidak ada redirect URI wildcard | ☐ | |
-| 1.5 | `google_sub` hanya diambil dari token ID yang sudah diverifikasi Google di server; tidak pernah dari input client | ☐ | |
-| 1.6 | Kolom `google_sub` UNIQUE di D1; percobaan membuat pengguna duplikat ditolak dengan aman | ☐ | |
+| 1.5 | Email Google terverifikasi hanya diambil dari profil userinfo Google yang dipanggil server setelah penukaran kode; tidak pernah dari input client; `sub` hanya dibaca sesaat untuk validasi profil dan tidak disimpan | ☐ | |
+| 1.6 | Kolom `email` UNIQUE di D1 (migrasi 0001); pengguna dikenali dari `email` + `provider='google'`; percobaan membuat pengguna duplikat ditolak dengan aman | ☐ | |
 | 1.7 | Redirect setelah login hanya ke path internal yang diizinkan (`/dashboard`); tidak ada parameter `next` bebas | ☐ | |
 | 1.8 | Rate limit 10/menit per IP pada `GET /api/auth/google` | ☐ | |
 | 1.9 | Client secret Google hanya sebagai secret Worker; tidak ada di repo, log, atau bundle frontend | ☐ | |
@@ -53,7 +53,7 @@ Legenda status: ☐ belum dikerjakan · ◐ sedang dikerjakan ·
 |---|---|---|---|
 | 3.1 | Token sesi acak minimal 32 byte dari `crypto.getRandomValues` | ☐ | |
 | 3.2 | Yang disimpan di D1 hanya SHA-256 token; token mentah tidak pernah disimpan di server | ☐ | |
-| 3.3 | Cookie sesi: HttpOnly, Secure, SameSite=Lax, Path=/, Max-Age 30 hari | ☐ | |
+| 3.3 | Cookie sesi: HttpOnly, Secure, SameSite=None (K-50), Path=/, Max-Age 30 hari | ☐ | |
 | 3.4 | Token sesi baru dibuat setelah login berhasil (tidak memakai token yang sudah ada sebelum login) | ☐ | |
 | 3.5 | Setiap request terautentikasi memverifikasi token, kedaluwarsa, dan flag `terkunci` | ☐ | |
 | 3.6 | Sesi yang masih `terkunci` ditolak di semua endpoint kecuali endpoint PIN (penegakan di Worker, bukan hanya redirect frontend) | ☐ | |
@@ -148,7 +148,7 @@ Legenda status: ☐ belum dikerjakan · ◐ sedang dikerjakan ·
 
 | # | Item | Status | Bukti |
 |---|---|---|---|
-| 10.1 | Cookie sesi: HttpOnly, Secure, SameSite=Lax, Path=/, Max-Age 30 hari (lihat bagian 3) | ☐ | |
+| 10.1 | Cookie sesi: HttpOnly, Secure, SameSite=None (K-50), Path=/, Max-Age 30 hari (lihat bagian 3) | ☐ | |
 | 10.2 | Cookie OAuth sementara (state/PKCE): HttpOnly, Secure, SameSite=Lax, masa berlaku singkat (maksimal 10 menit) | ☐ | |
 | 10.3 | Tidak ada cookie lain yang menyimpan data sensitif | ☐ | |
 | 10.4 | Cookie dihapus dengan benar saat logout (Max-Age=0, path dan atribut sama seperti saat dibuat) | ☐ | |

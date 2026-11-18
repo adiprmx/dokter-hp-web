@@ -18,6 +18,9 @@ import {
 } from "../lib/pin";
 import { ApiError, panggilApi } from "../lib/api";
 import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { StatusBadge } from "../components/ui/StatusBadge";
+import { tokenStatus } from "../lib/status-warna";
 
 // Layar atur/ubah/hapus PIN (/pengaturan/pin): atur PIN baru atau ubah PIN
 // lama (POST /api/auth/pin/set), hapus PIN (POST /api/auth/pin/delete),
@@ -29,6 +32,19 @@ import { Button } from "../components/ui/Button";
 // dimunculkan. /pin/set TIDAK PERNAH membuka sesi — sesudah berhasil,
 // sesi yang terkunci tetap terkunci dan pengguna diarahkan ke /kunci.
 // Teks mengikuti docs/copy.md bagian 12 dan 13.
+//
+// Redesign v2.0 (Tim Auth, Wave 2): logika TIDAK BERUBAH. Status PIN
+// tampil sebagai StatusBadge (hijau bila sudah diatur, biru bila belum
+// — belum diatur bukan galat, jadi bukan merah); pesan sukses memakai
+// Card status sukses dan pesan galat memakai Card status galat;
+// penolakan PIN lemah tampil jelas lewat tiga penanda sekaligus:
+// bingkai galat pada kolom PIN baru, pesan galat merah di bawah kolom
+// (role alert, fokus dipindah ke kolom — perilaku lama dipertahankan),
+// dan saran PIN kuat yang sudah ada di pesan; formulir hidup di Card
+// permukaan agar tugasnya jelas terpisah dari bagian hapus PIN;
+// keadaan muat memakai kerangka yang meniru tata letak akhir + teks
+// "Memuat…" yang terlihat. Warna status HANYA lewat helper
+// status-warna + Card/StatusBadge (spec §4).
 
 const PESAN_PIN_TIDAK_SAMA = "PIN yang diulang tidak sama. Periksa lagi.";
 const PESAN_PIN_LAMA_DIPERLUKAN =
@@ -36,6 +52,13 @@ const PESAN_PIN_LAMA_DIPERLUKAN =
 
 const CINCIN_FOKUS =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black";
+
+// Bingkai galat kolom memakai nilai PENUH token galat (teks), bukan
+// bingkai 45%: garis 1px pada alpha 45% hanya 2,26:1 terhadap latar
+// gelap — di bawah ambang 3:1 non-teks WCAG 1.4.11 untuk batas kolom;
+// nilai penuh 6,40:1. (Bingkai Card status tetap memakai token
+// bingkai — itu komponen bersama, di luar cakupan halaman ini.)
+const BINGKAI_GALAT_KOLOM = tokenStatus("galat").teks;
 
 function hanyaDigit(nilai: string): string {
   return nilai.replace(/\D/g, "").slice(0, 8);
@@ -240,9 +263,18 @@ export default function AturPinPage() {
 
   if (memuat) {
     return (
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
-        <div role="status" className="text-center text-base text-zinc-400">
+      <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
+        <p role="status" className="text-base text-zinc-400">
           Memuat…
+        </p>
+        <div aria-hidden="true" className="mt-6">
+          <div className="h-8 w-2/3 animate-pulse rounded-lg bg-[var(--color-surface-hover)]" />
+          <div className="mt-6 h-7 w-36 animate-pulse rounded-full bg-[var(--color-surface-hover)]" />
+          <div className="mt-6 space-y-5">
+            <div className="h-12 animate-pulse rounded-lg bg-[var(--color-surface-hover)]" />
+            <div className="h-12 animate-pulse rounded-lg bg-[var(--color-surface-hover)]" />
+            <div className="h-12 animate-pulse rounded-lg bg-[var(--color-surface-hover)]" />
+          </div>
         </div>
       </div>
     );
@@ -250,16 +282,20 @@ export default function AturPinPage() {
 
   if (sesiHabis) {
     return (
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
+      <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
         <h1 className="text-2xl font-bold tracking-tight text-white">
           PIN aplikasi
         </h1>
-        <div
+        <Card
+          status="galat"
           role="alert"
-          className="mt-6 rounded-xl border border-red-400/45 bg-red-400/10 px-4 py-3 text-sm leading-relaxed text-red-400"
+          className="mt-6"
+          style={{ color: tokenStatus("galat").teks }}
         >
-          Sesi sudah berakhir. Masuk lagi untuk lanjut.
-        </div>
+          <p className="text-sm leading-relaxed">
+            Sesi sudah berakhir. Masuk lagi untuk lanjut.
+          </p>
+        </Card>
         <Link
           to="/masuk"
           className={`mt-6 flex min-h-[48px] w-full items-center justify-center rounded-xl bg-white px-4 py-3 text-base font-semibold text-black ${CINCIN_FOKUS}`}
@@ -272,16 +308,20 @@ export default function AturPinPage() {
 
   if (gagalMuat) {
     return (
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
+      <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
         <h1 className="text-2xl font-bold tracking-tight text-white">
           PIN aplikasi
         </h1>
-        <div
+        <Card
+          status="galat"
           role="alert"
-          className="mt-6 rounded-xl border border-red-400/45 bg-red-400/10 px-4 py-3 text-sm leading-relaxed text-red-400"
+          className="mt-6"
+          style={{ color: tokenStatus("galat").teks }}
         >
-          {pesan ?? "Data tidak bisa dimuat. Coba lagi."}
-        </div>
+          <p className="text-sm leading-relaxed">
+            {pesan ?? "Data tidak bisa dimuat. Coba lagi."}
+          </p>
+        </Card>
         <Button
           onClick={() => void periksaSesi()}
           fullWidth
@@ -316,10 +356,20 @@ export default function AturPinPage() {
         }}
         aria-invalid={galatPinLama !== null}
         aria-describedby={galatPinLama ? "galat-pin-lama" : undefined}
-        className={`mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3 text-lg tracking-widest text-white placeholder-zinc-400 disabled:bg-[#27272a] disabled:text-[#a1a1aa] disabled:placeholder-zinc-500 ${CINCIN_FOKUS}`}
+        style={
+          galatPinLama
+            ? { borderColor: BINGKAI_GALAT_KOLOM }
+            : undefined
+        }
+        className={`mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3 text-lg tracking-widest text-white placeholder-zinc-400 transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)] disabled:bg-[var(--color-surface-hover)] disabled:text-[var(--color-text-disabled)] disabled:placeholder-zinc-500 ${CINCIN_FOKUS}`}
       />
       {galatPinLama && (
-        <p id="galat-pin-lama" role="alert" className="mt-2 text-sm text-red-400">
+        <p
+          id="galat-pin-lama"
+          role="alert"
+          className="mt-2 text-sm"
+          style={{ color: tokenStatus("galat").teks }}
+        >
           {galatPinLama}
         </p>
       )}
@@ -327,7 +377,7 @@ export default function AturPinPage() {
   );
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
+    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center bg-black px-6 py-12 text-zinc-100">
       <h1
         id="judul-atur-pin"
         tabIndex={-1}
@@ -339,20 +389,29 @@ export default function AturPinPage() {
         PIN melindungi riwayat pemeriksaan di aplikasi ini. PIN diminta setiap
         kali sesi baru dimulai.
       </p>
-      <p className="mt-4 text-sm leading-relaxed text-zinc-400">
-        {pinDiatur
-          ? "PIN sudah diatur."
-          : "PIN belum diatur. Aplikasi langsung terbuka tanpa PIN."}
-      </p>
+      <div className="mt-4">
+        {pinDiatur ? (
+          <StatusBadge status="sukses">PIN sudah diatur</StatusBadge>
+        ) : (
+          <StatusBadge status="info">PIN belum diatur</StatusBadge>
+        )}
+        {!pinDiatur && (
+          <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+            Aplikasi langsung terbuka tanpa PIN.
+          </p>
+        )}
+      </div>
 
       {sukses && (
-        <div
+        <Card
+          status="sukses"
           role="status"
-          className="mt-6 rounded-xl border border-emerald-400/45 bg-emerald-400/10 px-4 py-3 text-sm leading-relaxed text-emerald-400"
+          className="mt-6"
+          style={{ color: tokenStatus("sukses").teks }}
         >
-          {sukses}
+          <p className="text-sm leading-relaxed">{sukses}</p>
           {sesiTerkunci && (
-            <span className="mt-2 block">
+            <p className="mt-2 text-sm leading-relaxed">
               Sesi masih terkunci.{" "}
               <Link
                 to="/kunci"
@@ -360,94 +419,118 @@ export default function AturPinPage() {
               >
                 Buka dengan PIN baru
               </Link>
-            </span>
+            </p>
           )}
-        </div>
+        </Card>
       )}
       {pesan && (
-        <div
+        <Card
+          status="galat"
           role="alert"
-          className="mt-6 rounded-xl border border-red-400/45 bg-red-400/10 px-4 py-3 text-sm leading-relaxed text-red-400"
+          className="mt-6"
+          style={{ color: tokenStatus("galat").teks }}
         >
-          {pesan}
-        </div>
+          <p className="text-sm leading-relaxed">{pesan}</p>
+        </Card>
       )}
 
-      <form className="mt-6" onSubmit={(event) => void simpanPin(event)} noValidate>
-        {perluPinLama && aksiTertunda === "set" && (
-          <div className="mb-5">{kolomPinLama}</div>
-        )}
-        <div>
-          <label
-            htmlFor="pin-baru"
-            className="block text-sm font-medium text-zinc-100"
-          >
-            PIN baru (4–8 angka)
-          </label>
-          <input
-            id="pin-baru"
-            ref={pinBaruRef}
-            type="tel"
-            inputMode="numeric"
-            autoComplete="off"
-            autoCorrect="off"
-            maxLength={8}
-            value={pinBaru}
-            onChange={(event) => {
-              setPinBaru(hanyaDigit(event.target.value));
-              setGalatPin(null);
-            }}
-            aria-invalid={galatPin !== null}
-            aria-describedby={galatPin ? "galat-pin-baru" : undefined}
-            className={`mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3 text-lg tracking-widest text-white placeholder-zinc-400 disabled:bg-[#27272a] disabled:text-[#a1a1aa] disabled:placeholder-zinc-500 ${CINCIN_FOKUS}`}
-          />
-          {galatPin && (
-            <p id="galat-pin-baru" role="alert" className="mt-2 text-sm text-red-400">
-              {galatPin}
-            </p>
+      <Card padding="lg" className="mt-6">
+        <form onSubmit={(event) => void simpanPin(event)} noValidate>
+          {perluPinLama && aksiTertunda === "set" && (
+            <div className="mb-5">{kolomPinLama}</div>
           )}
-        </div>
+          <div>
+            <label
+              htmlFor="pin-baru"
+              className="block text-sm font-medium text-zinc-100"
+            >
+              PIN baru (4–8 angka)
+            </label>
+            <input
+              id="pin-baru"
+              ref={pinBaruRef}
+              type="tel"
+              inputMode="numeric"
+              autoComplete="off"
+              autoCorrect="off"
+              maxLength={8}
+              value={pinBaru}
+              onChange={(event) => {
+                setPinBaru(hanyaDigit(event.target.value));
+                setGalatPin(null);
+              }}
+              aria-invalid={galatPin !== null}
+              aria-describedby={galatPin ? "galat-pin-baru" : undefined}
+              style={
+                galatPin
+                  ? { borderColor: BINGKAI_GALAT_KOLOM }
+                  : undefined
+              }
+              className={`mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3 text-lg tracking-widest text-white placeholder-zinc-400 transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)] disabled:bg-[var(--color-surface-hover)] disabled:text-[var(--color-text-disabled)] disabled:placeholder-zinc-500 ${CINCIN_FOKUS}`}
+            />
+            {galatPin && (
+              <p
+                id="galat-pin-baru"
+                role="alert"
+                className="mt-2 text-sm leading-relaxed"
+                style={{ color: tokenStatus("galat").teks }}
+              >
+                {galatPin}
+              </p>
+            )}
+          </div>
 
-        <div className="mt-5">
-          <label
-            htmlFor="pin-ulang"
-            className="block text-sm font-medium text-zinc-100"
+          <div className="mt-5">
+            <label
+              htmlFor="pin-ulang"
+              className="block text-sm font-medium text-zinc-100"
+            >
+              Ulangi PIN baru
+            </label>
+            <input
+              id="pin-ulang"
+              ref={pinUlangRef}
+              type="tel"
+              inputMode="numeric"
+              autoComplete="off"
+              autoCorrect="off"
+              maxLength={8}
+              value={pinUlang}
+              onChange={(event) => {
+                setPinUlang(hanyaDigit(event.target.value));
+                setGalatUlang(null);
+              }}
+              aria-invalid={galatUlang !== null}
+              aria-describedby={galatUlang ? "galat-pin-ulang" : undefined}
+              style={
+                galatUlang
+                  ? { borderColor: BINGKAI_GALAT_KOLOM }
+                  : undefined
+              }
+              className={`mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3 text-lg tracking-widest text-white placeholder-zinc-400 transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)] disabled:bg-[var(--color-surface-hover)] disabled:text-[var(--color-text-disabled)] disabled:placeholder-zinc-500 ${CINCIN_FOKUS}`}
+            />
+            {galatUlang && (
+              <p
+                id="galat-pin-ulang"
+                role="alert"
+                className="mt-2 text-sm leading-relaxed"
+                style={{ color: tokenStatus("galat").teks }}
+              >
+                {galatUlang}
+              </p>
+            )}
+          </div>
+
+          <Button
+            type="submit"
+            loading={menyimpan}
+            fullWidth
+            className={`mt-6 ${CINCIN_FOKUS}`}
           >
-            Ulangi PIN baru
-          </label>
-          <input
-            id="pin-ulang"
-            ref={pinUlangRef}
-            type="tel"
-            inputMode="numeric"
-            autoComplete="off"
-            autoCorrect="off"
-            maxLength={8}
-            value={pinUlang}
-            onChange={(event) => {
-              setPinUlang(hanyaDigit(event.target.value));
-              setGalatUlang(null);
-            }}
-            aria-invalid={galatUlang !== null}
-            aria-describedby={galatUlang ? "galat-pin-ulang" : undefined}
-            className={`mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3 text-lg tracking-widest text-white placeholder-zinc-400 disabled:bg-[#27272a] disabled:text-[#a1a1aa] disabled:placeholder-zinc-500 ${CINCIN_FOKUS}`}
-          />
-          {galatUlang && (
-            <p id="galat-pin-ulang" role="alert" className="mt-2 text-sm text-red-400">
-              {galatUlang}
-            </p>
-          )}
-        </div>
-
-        <Button
-          type="submit"
-          loading={menyimpan}
-          fullWidth
-          className={`mt-6 ${CINCIN_FOKUS}`}
-        >
-          {pinDiatur ? "Ubah PIN" : "Atur PIN"}
-        </Button>
-      </form>
+            {pinDiatur ? "Ubah PIN" : "Atur PIN"}
+          </Button>
+        </form>
+      </Card>
 
       {pinDiatur && (
         <section

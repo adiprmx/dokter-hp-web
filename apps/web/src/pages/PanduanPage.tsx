@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { Link, useParams } from "react-router-dom";
 import { cariPanduan, PANDUAN } from "../data/panduan";
+import { Card } from "../components/ui/Card";
+import { MeterStrip } from "../components/ui/MeterStrip";
 
 // Halaman panduan (rute `/panduan/:slug`). Isi dari src/data/panduan.ts.
 // Langkah perbaikan memakai <ol> sungguhan (docs/seo.md §7).
@@ -10,9 +12,18 @@ import { cariPanduan, PANDUAN } from "../data/panduan";
 // <script> dinamis mati di bawah CSP script-src (N-01, K-82) dan
 // tidak dapat di-hash karena isinya bergantung data halaman.
 // Structured data FAQ kembali bersama prerender pasca-v1.0 (K-22).
+// Redesign v2.0 (mode Read): kolom baca 65ch, langkah bernomor
+// dengan ruang napas, strip meter sebagai motif identitas di bawah
+// judul, kartu panduan lain memakai permukaan token.
 
 const FOKUS =
   "focus-visible:outline focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-2";
+
+const TOMBOL_PRIMER =
+  "inline-flex min-h-[48px] items-center justify-center rounded-xl bg-white px-5 py-3 text-base font-semibold text-black transition-colors hover:bg-zinc-200";
+
+const KARTU_PANDUAN =
+  "block rounded-xl bg-[var(--color-surface)] px-5 py-4 transition-colors hover:bg-[var(--color-surface-hover)]";
 
 export default function PanduanPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -45,21 +56,22 @@ export default function PanduanPage() {
 
   if (!panduan) {
     return (
-      <div className="min-h-screen bg-black text-zinc-100">
-        <div className="mx-auto w-full max-w-2xl px-5 pb-16 pt-10 sm:pt-14">
+      <div className="bg-black text-[var(--color-text-primary)]">
+        <div className="mx-auto w-full max-w-[65ch] pb-16 pt-4">
           <h1
             ref={judulRef}
             tabIndex={-1}
-            className="text-2xl font-bold leading-tight tracking-tight text-white"
+            className="text-3xl font-bold leading-tight tracking-tight text-white"
           >
             Panduan tidak ditemukan
           </h1>
-          <p className="mt-3 text-base leading-relaxed text-zinc-400">
+          <MeterStrip className="mt-5" />
+          <p className="mt-5 text-base leading-relaxed text-[var(--color-text-muted)]">
             Halaman yang dicari tidak ada. Kembali ke beranda.
           </p>
           <Link
             to="/"
-            className={`mt-6 inline-flex min-h-[48px] items-center rounded-xl bg-white px-5 py-3 text-base font-semibold text-black transition-colors hover:bg-zinc-200 ${FOKUS}`}
+            className={`${TOMBOL_PRIMER} mt-6 ${FOKUS}`}
           >
             Kembali ke beranda
           </Link>
@@ -75,9 +87,11 @@ export default function PanduanPage() {
                 <li key={item.slug}>
                   <Link
                     to={`/panduan/${item.slug}`}
-                    className={`block rounded-xl border border-zinc-800 bg-zinc-950 px-5 py-4 text-base font-semibold text-white underline decoration-zinc-500 underline-offset-4 transition-colors hover:bg-zinc-900 ${FOKUS}`}
+                    className={`${KARTU_PANDUAN} ${FOKUS}`}
                   >
-                    {item.judul}
+                    <span className="text-base font-semibold text-white underline decoration-[var(--color-border-strong)] underline-offset-4">
+                      {item.judul}
+                    </span>
                   </Link>
                 </li>
               ))}
@@ -91,17 +105,17 @@ export default function PanduanPage() {
   const panduanLain = PANDUAN.filter((p) => p.slug !== panduan.slug);
 
   return (
-    <div className="min-h-screen bg-black text-zinc-100">
-      <div className="mx-auto w-full max-w-2xl px-5 pb-16 pt-10 sm:pt-14">
+    <div className="bg-black text-[var(--color-text-primary)]">
+      <div className="mx-auto w-full max-w-[65ch] pb-16 pt-4">
         <nav aria-label="Navigasi panduan">
           <Link
             to="/"
-            className={`inline-flex min-h-[48px] items-center text-base font-medium text-zinc-100 underline decoration-zinc-500 underline-offset-4 ${FOKUS}`}
+            className={`inline-flex min-h-[48px] items-center text-base font-medium text-[var(--color-text-primary)] underline decoration-[var(--color-border-strong)] underline-offset-4 ${FOKUS}`}
           >
             Kembali ke beranda
           </Link>
         </nav>
-        <article className="mt-6">
+        <article className="mt-2">
           <h1
             ref={judulRef}
             tabIndex={-1}
@@ -109,14 +123,18 @@ export default function PanduanPage() {
           >
             {panduan.judul}
           </h1>
-          <p className="mt-4 text-base leading-relaxed text-zinc-400">
+          <MeterStrip className="mt-5" />
+          <p className="mt-5 text-base leading-relaxed text-[var(--color-text-muted)]">
             {panduan.deskripsi}
           </p>
-          <ol className="mt-8 list-decimal space-y-5 pl-6 marker:font-semibold marker:text-white">
+          <p className="mt-3 text-sm text-[var(--color-text-muted)]">
+            {panduan.langkah.length} langkah
+          </p>
+          <ol className="mt-8 list-decimal space-y-6 pl-6 marker:font-semibold marker:text-white">
             {panduan.langkah.map((langkah, index) => (
               <li
                 key={index}
-                className="text-base leading-relaxed text-zinc-100"
+                className="text-base leading-relaxed text-[var(--color-text-primary)]"
               >
                 {langkah}
               </li>
@@ -124,27 +142,26 @@ export default function PanduanPage() {
           </ol>
         </article>
 
-        <section
-          aria-labelledby="langkah-selanjutnya"
-          className="mt-12 rounded-xl border border-zinc-800 bg-zinc-950 px-5 py-4"
-        >
-          <h2
-            id="langkah-selanjutnya"
-            className="text-base font-semibold text-white"
-          >
-            Langkah selanjutnya
-          </h2>
-          <p className="mt-1 text-sm leading-relaxed text-zinc-400">
-            Setelah mengikuti panduan ini, ukur lagi kondisi HP untuk
-            memastikan ada perubahan.
-          </p>
-          <Link
-            to="/wifi"
-            className={`mt-4 inline-flex min-h-[48px] items-center rounded-xl bg-white px-5 py-3 text-base font-semibold text-black transition-colors hover:bg-zinc-200 ${FOKUS}`}
-          >
-            Tes kecepatan WiFi sekarang
-          </Link>
-        </section>
+        <Card padding="lg" className="mt-12">
+          <section aria-labelledby="langkah-selanjutnya">
+            <h2
+              id="langkah-selanjutnya"
+              className="text-base font-semibold text-white"
+            >
+              Langkah selanjutnya
+            </h2>
+            <p className="mt-1 text-sm leading-relaxed text-[var(--color-text-muted)]">
+              Setelah mengikuti panduan ini, ukur lagi kondisi HP untuk
+              memastikan ada perubahan.
+            </p>
+            <Link
+              to="/wifi"
+              className={`${TOMBOL_PRIMER} mt-4 ${FOKUS}`}
+            >
+              Tes kecepatan WiFi sekarang
+            </Link>
+          </section>
+        </Card>
 
         <nav aria-labelledby="panduan-lain" className="mt-12">
           <h2
@@ -158,12 +175,12 @@ export default function PanduanPage() {
               <li key={item.slug}>
                 <Link
                   to={`/panduan/${item.slug}`}
-                  className={`block rounded-xl border border-zinc-800 bg-zinc-950 px-5 py-4 transition-colors hover:bg-zinc-900 ${FOKUS}`}
+                  className={`${KARTU_PANDUAN} ${FOKUS}`}
                 >
-                  <span className="text-base font-semibold text-white underline decoration-zinc-500 underline-offset-4">
+                  <span className="text-base font-semibold text-white underline decoration-[var(--color-border-strong)] underline-offset-4">
                     {item.judul}
                   </span>
-                  <span className="mt-1 block text-sm leading-relaxed text-zinc-400">
+                  <span className="mt-1 block text-sm leading-relaxed text-[var(--color-text-muted)]">
                     {item.deskripsi}
                   </span>
                 </Link>

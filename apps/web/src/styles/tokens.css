@@ -4,7 +4,11 @@
    setiap pasangan teks sudah dihitung rasionya dan lolos WCAG AA 4,5:1.
    Cara pakai: tim scaffold mengimpor file ini di index.css setelah
    direktif Tailwind. Komponen memakai token lewat var(), contoh:
-   bg-[var(--color-surface)]. */
+   bg-[var(--color-surface)].
+   v2.0 (18 Nov 2026, redesign-v20-spec.md): tambah skala display besar
+   (--text-display-lg/xl), ukuran cincin skor (--ring-score-*), dan
+   --duration-slow. TIDAK ADA nilai v1.0 yang diubah dan TIDAK ADA warna
+   baru: status tetap 4 warna yang sudah ada (K-11). */
 
 :root {
   /* Permukaan: kanvas hitam murni sesuai design lock proyek. */
@@ -58,8 +62,15 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 
   /* Skala teks tetap (rem), bukan fluid: layar Operate dibaca pada DPI
-     yang konsisten dan judul tidak boleh mengecil di panel sempit. */
+     yang konsisten dan judul tidak boleh mengecil di panel sempit.
+     Skala display v2.0 (spec §5): angka ukur (skor, kecepatan,
+     persentase) harus jelas beda dari teks tubuh: display-lg untuk
+     angka skor di cincin besar dan hasil tes utama, display-xl untuk
+     angka hero dasbor/beranda di desktop. Angka display adalah teks
+     besar (ambang kontras 3:1) dan selalu mono + tabular via .dh-numeric. */
   --text-display: 2rem;
+  --text-display-lg: 2.5rem;
+  --text-display-xl: 3rem;
   --text-h1: 1.5rem;
   --text-h2: 1.25rem;
   --text-h3: 1.125rem;
@@ -69,6 +80,7 @@
   --leading-tight: 1.2;
   --leading-normal: 1.5;
   --leading-relaxed: 1.65;
+  --leading-display: 1.1;
 
   /* Jarak: kelipatan 4px. */
   --space-1: 4px;
@@ -87,12 +99,29 @@
   --radius-pill: 999px;
   --radius-focus: 4px;
 
+  /* Cincin skor v2.0 (ScoreRing, spec §8-§9): dua diameter kanonis.
+     Besar untuk dasbor desktop (cincin di kiri grid 2 kolom) dan hero;
+     kecil untuk riwayat skor mini dan kartu ringkas. Geometri SVG
+     tetap milik komponen (viewBox 120, radius 52, stroke 10 = 1/12
+     diameter); token ini hanya diameter luar, dipakai lewat style
+     width/height atau prop ukuran. Default komponen 128px tetap ada
+     di antara keduanya dan tidak diubah. */
+  --ring-score-size: 160px;
+  --ring-score-size-sm: 96px;
+
   /* Bayangan: hanya penanda elevasi (dialog, dropdown). Kartu datar. */
   --shadow-elevated: 0 8px 24px rgb(0 0 0 / 0.5);
 
-  /* Gerak: cepat, hanya untuk umpan balik dan perubahan status. */
+  /* Gerak: cepat, hanya untuk umpan balik dan perubahan status.
+     slow v2.0 (spec §6): sapuan cincin skor dan isi meter saat nilai
+     tampil. Gerak ini harus TERBACA, bukan sekadar transisi.
+     Nilai 600ms bukan angka baru: ScoreRing sudah memakai 600ms
+     hardcoded untuk sapuan stroke-dashoffset; token ini memberi nama
+     kanonisnya (Wave 2 mengganti string hardcoded ke var ini).
+     Tidak ada animasi masuk per bagian, tidak ada loop tanpa akhir. */
   --duration-fast: 150ms;
   --duration-medium: 250ms;
+  --duration-slow: 600ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Lapisan: skala z-index yang didokumentasikan. */
@@ -103,6 +132,14 @@
 
   /* Target sentuh minimum proyek: 48 x 48 px. */
   --tap-min: 48px;
+
+  /* Breakpoint v2.0 (DOKUMENTASI, bukan variabel): var() CSS tidak bisa
+     dipakai di @media, jadi token breakpoint hanya akan jadi token mati
+     yang menyesatkan. Komponen memakai kelas Tailwind (md:/lg:/xl:,
+     default Tailwind: sm 640, md 768, lg 1024, xl 1280).
+     Kanon layout (spec §5): HP 360px satu kolom, nol overflow
+     horizontal; grid 2 kolom dasbor/beranda mulai lg 1024px; lebar
+     penuh desktop di xl 1280px. */
 }
 
 /* Dasar halaman: tema gelap terkunci, satu tema untuk semua layar. */

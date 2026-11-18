@@ -27,7 +27,7 @@
 // [ ] Pilih akun tes di layar Google, setujui izin.
 // [ ] Hasil yang diharapkan: kembali ke /dashboard, nama pengguna
 //     tampil, tidak ada pesan galat.
-// [ ] Periksa cookie: cookie sesi HttpOnly, Secure, SameSite=Lax,
+// [ ] Periksa cookie: cookie sesi HttpOnly, Secure, SameSite=None,
 //     Path=/, masa berlaku 30 hari (DevTools > Application > Cookies).
 // [ ] Periksa: token sesi mentah TIDAK terlihat di localStorage
 //     atau sessionStorage (hanya cookie HttpOnly yang boleh ada).

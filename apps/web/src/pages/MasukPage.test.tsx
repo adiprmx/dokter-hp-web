@@ -8,6 +8,8 @@
 // oauth_belum_disiapkan menampilkan pesan ramah. Pola pasang
 // mengikuti PanduanPage.test.tsx; fetch diganti (stub) seperti
 // api.test.ts — tidak ada panggilan jaringan nyata.
+// Redesign v2.0 (spec §7): setiap keadaan yang menampilkan tombol
+// Google juga menegaskan logo "G" resmi tampil di dalam tombol itu.
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -71,6 +73,9 @@ describe("MasukPage (K-89/K-92)", () => {
     await pasang();
     const tombol = wadah?.querySelector("button[disabled]");
     expect(tombol?.textContent).toBe("Memeriksa login Google…");
+    expect(
+      tombol?.querySelector('img[src="/brand/google-g.svg"]'),
+    ).not.toBeNull();
     expect(wadah?.querySelector('a[href*="/api/auth/google"]')).toBeNull();
   });
 
@@ -79,6 +84,9 @@ describe("MasukPage (K-89/K-92)", () => {
     await pasang();
     const tombol = wadah?.querySelector("button[disabled]");
     expect(tombol?.textContent).toBe("Masuk dengan Google belum disiapkan");
+    expect(
+      tombol?.querySelector('img[src="/brand/google-g.svg"]'),
+    ).not.toBeNull();
     expect(wadah?.textContent).toContain(
       "Login Google belum disiapkan untuk situs ini.",
     );
@@ -90,6 +98,9 @@ describe("MasukPage (K-89/K-92)", () => {
     await pasang();
     const tautan = wadah?.querySelector('a[href*="/api/auth/google"]');
     expect(tautan?.textContent).toBe("Masuk dengan Google");
+    expect(
+      tautan?.querySelector('img[src="/brand/google-g.svg"]'),
+    ).not.toBeNull();
     expect(wadah?.querySelector("button[disabled]")).toBeNull();
   });
 
@@ -103,6 +114,9 @@ describe("MasukPage (K-89/K-92)", () => {
     await pasang();
     const tombol = wadah?.querySelector("button[disabled]");
     expect(tombol?.textContent).toBe("Tidak dapat memeriksa login Google");
+    expect(
+      tombol?.querySelector('img[src="/brand/google-g.svg"]'),
+    ).not.toBeNull();
     expect(wadah?.textContent).toContain(
       "Status login Google tidak dapat diperiksa saat ini.",
     );
@@ -140,6 +154,9 @@ describe("MasukPage (K-89/K-92)", () => {
     await act(async () => {});
     const tautan = wadah?.querySelector('a[href*="/api/auth/google"]');
     expect(tautan?.textContent).toBe("Masuk dengan Google");
+    expect(
+      tautan?.querySelector('img[src="/brand/google-g.svg"]'),
+    ).not.toBeNull();
     expect(wadah?.querySelector("button[disabled]")).toBeNull();
     expect(panggilan).toBe(2);
   });
@@ -151,5 +168,10 @@ describe("MasukPage (K-89/K-92)", () => {
     expect(peringatan?.textContent).toBe(
       "Masuk dengan Google belum disiapkan untuk situs ini.",
     );
+    expect(
+      wadah?.querySelector(
+        'a[href*="/api/auth/google"] img[src="/brand/google-g.svg"]',
+      ),
+    ).not.toBeNull();
   });
 });

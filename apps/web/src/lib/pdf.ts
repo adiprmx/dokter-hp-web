@@ -11,6 +11,8 @@
 // Semua teks yang dihasilkan memakai data asli dari API — tanpa angka
 // atau entri contoh (PRODUCT.md bagian 8).
 
+import { labelStatus, statusDariDoctor, statusDariSkor } from "./status-warna";
+
 // ---------------------------------------------------------------------------
 // Tipe data API (bentuk sesuai docs/api-contracts.md)
 // ---------------------------------------------------------------------------
@@ -120,18 +122,18 @@ const LABEL_KOMPONEN: Record<KunciKomponen, string> = {
   keamanan: "Keamanan",
 };
 
-const LABEL_STATUS_KOMPONEN: Record<StatusKomponen, string> = {
-  baik: "Baik",
-  cukup: "Cukup",
-  perlu_perhatian: "Perlu perhatian",
-};
-
 export function labelKomponen(kunci: KunciKomponen): string {
   return LABEL_KOMPONEN[kunci];
 }
 
+/**
+ * Label status komponen pemeriksaan. K-94: label status yang tampil di
+ * UI hanya dari labelStatus() status-warna.ts — fungsi ini mendelegasikan
+ * ke sana agar baris komponen Riwayat, teks PDF, dan kartu Dashboard
+ * memakai kata yang sama untuk keadaan yang sama.
+ */
 export function labelStatusKomponen(status: StatusKomponen): string {
-  return LABEL_STATUS_KOMPONEN[status];
+  return labelStatus(statusDariDoctor(status));
 }
 
 export function labelSinyal(
@@ -182,16 +184,12 @@ export function formatTanggalWaktu(iso: string): string {
 // Kategori skor dan klasifikasi kecepatan
 // ---------------------------------------------------------------------------
 
-// Ambang kategori skor adalah konvensi tampilan frontend (80/50):
-// dokumen produk menyebut tiga kategori (Baik / Cukup / Perlu
-// perhatian) tanpa ambang angka. Tim dashboard memakai ambang yang
-// sama agar kategori konsisten di semua layar.
-export function kategoriSkor(
-  skor: number,
-): "Baik" | "Cukup" | "Perlu perhatian" {
-  if (skor >= 80) return "Baik";
-  if (skor >= 50) return "Cukup";
-  return "Perlu perhatian";
+// Ambang kategori skor adalah konvensi tampilan frontend (80/50).
+// Label memakai kosakata status kanonis K-94 (Baik / Perlu
+// diperhatikan / Bermasalah) lewat status-warna.ts — satu kata untuk
+// satu keadaan di UI, kartu konteks AI, dan dokumen PDF.
+export function kategoriSkor(skor: number): string {
+  return labelStatus(statusDariSkor(skor));
 }
 
 export type KlasifikasiKecepatan =

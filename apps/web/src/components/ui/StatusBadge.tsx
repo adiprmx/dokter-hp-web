@@ -1,43 +1,38 @@
 import type { ReactNode } from "react";
-
-export type StatusKind = "success" | "error" | "warning" | "info" | "neutral";
+import { tokenStatus, type StatusWarna } from "../../lib/status-warna";
 
 export interface StatusBadgeProps {
-  status: StatusKind;
+  /** Keadaan status kanonis (satu kosakata dengan Card + helper status-warna, K-95). */
+  status: StatusWarna;
   dot?: boolean;
   children: ReactNode;
 }
 
-const kindClass: Record<StatusKind, string> = {
-  success:
-    "border-[var(--color-success-border)] bg-[var(--color-success-bg)] text-[var(--color-success)]",
-  error:
-    "border-[var(--color-error-border)] bg-[var(--color-error-bg)] text-[var(--color-error)]",
-  warning:
-    "border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] text-[var(--color-warning)]",
-  info:
-    "border-[var(--color-info-border)] bg-[var(--color-info-bg)] text-[var(--color-info)]",
-  neutral:
-    "border-[var(--color-border-strong)] bg-[var(--color-surface-raised)] text-[var(--color-text-secondary)]",
-};
-
 // Cip status. Makna selalu dibawa oleh teks label, bukan hanya warna
 // atau titik: titik hanya penanda tambahan untuk keadaan yang memang
 // hidup (misalnya tes sedang berjalan) dan tidak pernah berdiri
-// sendiri tanpa label. Cip ini label statis, bukan wilayah live;
-// halaman mengumumkan perubahan status lewat LiveRegion (a11y.md 5.3).
+// sendiri tanpa label. Ukuran pil konsisten di semua varian
+// (tinggi 28 px, teks 13 px, label satu baris) agar cip sejajar
+// rapi saat berdampingan di daftar. Cip ini label statis, bukan
+// wilayah live; halaman mengumumkan perubahan status lewat
+// LiveRegion (a11y.md 5.3).
 export function StatusBadge({
   status,
   dot = false,
   children,
 }: StatusBadgeProps) {
+  const token = tokenStatus(status);
   return (
     <span
       className={[
         "inline-flex min-h-[28px] items-center gap-1.5 rounded-full border",
-        "px-2.5 py-1 text-[13px] font-medium leading-none",
-        kindClass[status],
+        "px-2.5 py-1 text-[13px] font-medium leading-none whitespace-nowrap",
       ].join(" ")}
+      style={{
+        backgroundColor: token.latar,
+        borderColor: token.bingkai,
+        color: token.teks,
+      }}
     >
       {dot ? (
         <span

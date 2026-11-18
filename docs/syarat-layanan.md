@@ -1,8 +1,6 @@
 # Syarat Layanan — Dokter HP
 
-> **Catatan:** Dokumen ini adalah draf dan perlu peninjauan akhir sebelum tayang.
->
-> **Terakhir diperbarui:** 17 November 2026
+**Terakhir diperbarui:** 18 November 2026
 
 Dengan memakai Dokter HP, pengguna menyetujui syarat-syarat berikut.
 Bila pengguna tidak menyetujui syarat ini, pengguna sebaiknya tidak
@@ -11,8 +9,8 @@ memakai layanan.
 ## 1. Layanan
 
 Dokter HP adalah aplikasi web gratis yang membantu pengguna
-memeriksa kondisi HP mereka — WiFi, baterai, penyimpanan, performa,
-dan keamanan — serta memberikan rekomendasi perbaikan dan diagnosis
+memeriksa kondisi HP mereka (WiFi, baterai, penyimpanan, performa,
+dan keamanan) serta memberikan rekomendasi perbaikan dan diagnosis
 berbasis AI.
 
 Layanan diberikan **gratis** dan **apa adanya** ("as is"), tanpa
@@ -64,8 +62,8 @@ melanggar ketentuan ini.
   pasti**, bukan pengganti teknisi, dan bukan jaminan bahwa suatu
   langkah perbaikan akan menyelesaikan masalah.
 - Skor kesehatan, estimasi waktu pakai baterai, dan rekomendasi
-  lain bersifat perkiraan berdasarkan data yang tersedia; komponen
-  tanpa data dilewati dalam perhitungan.
+  lain bersifat perkiraan berdasarkan data yang tersedia. Skor
+  setiap pemeriksaan dihitung dari komponen yang diperiksa saja.
 - Untuk kerusakan perangkat keras atau masalah yang tidak kunjung
   teratasi, pengguna disarankan berkonsultasi dengan teknisi.
 - Pengguna memakai saran dan rekomendasi Dokter HP atas risiko dan
@@ -113,4 +111,17 @@ aplikasi.
 
 ---
 
-*Dokumen ini adalah draf dan perlu peninjauan akhir sebelum tayang.*
+## Catatan peninjauan
+
+Pada 18 November 2026, Tim Syarat (redesign v2.0, Wave 2) meninjau
+dokumen ini terhadap kode produk v1.0 yang sudah live dan
+menghapus status drafnya. Peninjauan menemukan satu klaim yang
+tidak sesuai kenyataan dan memperbaikinya: tidak ada perhitungan
+skor gabungan lintas komponen, setiap pemeriksaan membawa satu
+komponen dan skornya dihitung dari komponen yang diperiksa saja
+(dokumen lama menyebut komponen tanpa data "dilewati dalam
+perhitungan"). Seluruh klaim lain terverifikasi benar terhadap
+kode, termasuk batas Diagnosis AI 20 pertanyaan per hari, masuk
+Google sebagai satu-satunya cara masuk, tes WiFi tanpa akun yang
+tidak menyimpan data, PIN, ekspor JSON, penghapusan akun, dan
+kontak lewat repositori publik adiprmx/dokter-hp.

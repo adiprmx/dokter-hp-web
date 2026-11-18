@@ -1,12 +1,10 @@
 # Kebijakan Privasi — Dokter HP
 
-> **Catatan:** Dokumen ini adalah draf dan perlu peninjauan akhir sebelum tayang.
->
-> **Terakhir diperbarui:** 17 November 2026
+**Terakhir diperbarui:** 18 November 2026
 
 Dokter HP adalah aplikasi web yang membantu pengguna memeriksa kondisi
-HP mereka — mulai dari WiFi, baterai, penyimpanan, performa, hingga
-keamanan — lewat browser. Dokumen ini menjelaskan data apa saja yang
+HP mereka lewat browser, mulai dari WiFi, baterai, penyimpanan,
+performa, hingga keamanan. Dokumen ini menjelaskan data apa saja yang
 dikumpulkan Dokter HP, untuk apa data itu dipakai, di mana data itu
 disimpan, dan hak apa saja yang dimiliki pengguna atas datanya.
 Bahasa yang dipakai di sini sengaja dibuat sederhana agar mudah
@@ -33,19 +31,22 @@ Saat pengguna masuk dengan Google, Dokter HP menerima dan menyimpan:
 |---|---|
 | Nama | Menampilkan nama di profil dan dashboard |
 | Alamat email | Mengidentifikasi akun pengguna |
-| Pengenal akun Google (sub) | Mengenali akun yang sama saat pengguna masuk kembali |
 
 Data ini berasal dari akun Google pengguna dan hanya diambil setelah
 pengguna menekan tombol masuk dan menyetujui di halaman Google.
+Pengenal akun Google (sub) hanya dipakai sesaat untuk memvalidasi
+profil saat masuk dan tidak disimpan; akun yang sama dikenali dari
+alamat email Google yang terverifikasi.
 Dokter HP tidak menerima atau menyimpan kata sandi Google pengguna.
 
 ### 1.2 PIN aplikasi
 
 Pengguna boleh mengatur PIN 4–8 digit sebagai kunci tambahan untuk
 membuka aplikasi. PIN asli **tidak pernah disimpan**. Yang disimpan
-hanya hasil hash SHA-256 dari PIN yang dicampur salt (nilai acak).
-Karena itu, tidak ada pihak mana pun — termasuk pengembang — yang
-bisa melihat PIN pengguna.
+hanya hasil hash HMAC-SHA256 dari PIN yang dicampur salt (nilai
+acak) dan kunci rahasia server (pepper) yang tidak tersimpan di
+database. Karena itu, tidak ada pihak mana pun, termasuk pengembang,
+yang bisa melihat PIN pengguna.
 
 Bila pengguna lupa PIN, pemulihannya adalah masuk ulang dengan
 Google, lalu mengatur PIN baru dari Pengaturan. Riwayat yang sudah
@@ -62,7 +63,7 @@ Setiap kali pengguna menjalankan diagnosis, Dokter HP menyimpan:
 - Skor kesehatan HP (0–100).
 - Ringkasan hasil pemeriksaan dalam bentuk data terstruktur
   (status baterai, penyimpanan, performa, keamanan, dan sumber
-  tiap komponen — misalnya dari tes web, dari input manual, atau
+  tiap komponen (misalnya dari tes web, dari input manual, atau
   dari riwayat APK).
 
 Tujuannya: menampilkan skor, grafik riwayat, dan tiga pemeriksaan
@@ -85,8 +86,8 @@ menyimpan:
 Perlu diketahui: browser tidak bisa membaca SSID, sinyal, channel,
 atau DNS perangkat secara otomatis. Kolom-kolom itu hanya terisi
 bila pengguna mengisinya sendiri. Tes WiFi yang dijalankan tanpa
-masuk (tombol "Coba tes WiFi tanpa akun") tidak menyimpan apa pun —
-hasilnya hanya tampil di layar.
+masuk (tombol "Coba tes WiFi tanpa akun") tidak menyimpan apa pun.
+Hasilnya hanya tampil di layar.
 
 ### 1.5 Riwayat tanya-jawab AI
 
@@ -105,8 +106,10 @@ menyimpan:
 - Informasi perangkat lunak browser (user agent) dan alamat IP
   terakhir, untuk menampilkan daftar sesi aktif di Pengaturan
   sehingga pengguna bisa keluar dari sesi lain.
-- Alamat IP publik saat tes WiFi dijalankan, karena alamat IP
-  adalah bagian dari hasil tes jaringan yang ditampilkan.
+
+Alamat IP publik memang tampil saat tes WiFi dijalankan (sebagai
+bagian dari hasil tes jaringan), tetapi tidak disimpan bersama
+laporan WiFi.
 
 Dokter HP tidak mencatat isi PIN, token sesi mentah, atau isi
 lengkap jawaban AI di dalam log server. Log hanya berisi id,
@@ -115,8 +118,8 @@ status, dan waktu.
 ### 1.7 Data yang TIDAK dikumpulkan
 
 - Dokter HP tidak membaca daftar aplikasi, level baterai,
-  penyimpanan, RAM, CPU, atau suhu HP secara langsung dari browser —
-  browser tidak mengizinkannya. Data semacam itu hanya ada bila
+  penyimpanan, RAM, CPU, atau suhu HP secara langsung dari browser.
+  Browser tidak mengizinkannya. Data semacam itu hanya ada bila
   pengguna mengisinya manual atau berasal dari riwayat APK.
 - Dokter HP tidak mengumpulkan lokasi, kontak, foto, atau file
   dari perangkat pengguna.
@@ -191,7 +194,7 @@ Saat pengguna mengirim pertanyaan ke Diagnosis AI:
 2. Server menambahkan ringkasan data perangkat pengguna
    (pemeriksaan terakhir dan laporan WiFi terakhir) sebagai
    konteks, lalu mengirim pertanyaan beserta konteks tersebut ke
-   layanan Google Gemini — pengiriman ini terjadi dari server,
+   layanan Google Gemini. Pengiriman ini terjadi dari server,
    bukan dari browser, dan kunci API tidak pernah ada di browser.
 3. Jawaban dari Gemini disimpan ke riwayat tanya-jawab pengguna
    dan ditampilkan di layar.
@@ -228,7 +231,8 @@ Dokter HP.
 Dokter HP melindungi data pengguna dengan langkah-langkah berikut:
 
 - Seluruh komunikasi memakai HTTPS.
-- PIN disimpan sebagai hash SHA-256 + salt, bukan teks asli.
+- PIN disimpan sebagai hash HMAC-SHA256 + salt + kunci rahasia
+  server (pepper), bukan teks asli.
 - Token sesi disimpan sebagai hash; token mentah hanya ada di
   cookie pengguna.
 - Kunci API dan secret lain hanya tersimpan di sisi server dan
@@ -254,15 +258,16 @@ Pengguna Dokter HP berhak:
 - **Melihat** seluruh datanya: profil di Pengaturan, riwayat di
   halaman Riwayat, dan riwayat tanya-jawab di halaman Diagnosis AI.
 - **Mengekspor** datanya: mengunduh laporan PDF berisi riwayat
-  pemeriksaan dan WiFi dari halaman Riwayat. PDF dibuat di browser
-  dari data pengguna sendiri.
+  pemeriksaan dan WiFi dari halaman Riwayat, atau mengunduh
+  seluruh data sebagai berkas JSON dari Pengaturan. PDF dibuat di
+  browser dari data pengguna sendiri.
 - **Menghapus** datanya: menghapus entri riwayat satu per satu,
   atau menghapus akun beserta seluruh datanya dari Pengaturan
   (penghapusan akun bersifat permanen dan tidak bisa dibatalkan).
 - **Mengubah** datanya: mengubah nama tampilan dan PIN dari
   Pengaturan.
 - **Keluar** dari satu atau semua sesi dari Pengaturan.
-- **Memakai layanan tanpa akun** untuk tes WiFi sekali jalan —
+- **Memakai layanan tanpa akun** untuk tes WiFi sekali jalan,
   tanpa data apa pun yang tersimpan.
 
 ## 10. Perubahan kebijakan
@@ -283,4 +288,17 @@ Tentang di dalam aplikasi.
 
 ---
 
-*Dokumen ini adalah draf dan perlu peninjauan akhir sebelum tayang.*
+## Catatan peninjauan
+
+Pada 18 November 2026, Tim Privasi (redesign v2.0, Wave 1) meninjau
+dokumen ini terhadap kode produk v1.0 yang sudah live dan
+menghapus status drafnya. Peninjauan menemukan empat klaim yang
+tidak sesuai kenyataan dan memperbaikinya: (1) pengenal akun Google
+(sub) ternyata tidak disimpan, akun dikenali dari email Google yang
+terverifikasi; (2) PIN disimpan sebagai hash HMAC-SHA256 dengan salt
+dan kunci rahasia server (pepper), bukan hash SHA-256 biasa;
+(3) alamat IP publik saat tes WiFi hanya ditampilkan, tidak disimpan
+bersama laporan; (4) cookie sesi memakai SameSite=None, bukan
+SameSite=Lax (kesalahan hanya di halaman web, dokumen sudah benar).
+Hak ekspor juga dilengkapi dengan unduhan JSON dari Pengaturan.
+Seluruh klaim lain terverifikasi benar terhadap kode.

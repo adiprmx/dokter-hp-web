@@ -5,14 +5,15 @@
 > gampang dicerna semua orang. Tanpa istilah teknis, tanpa angka yang
 > tidak perlu, tanpa klaim berlebihan. Jujur soal batasan.
 >
-> Status: Fase 1 — dokumen, 17 November 2026.
+> Status: Fase 1 (dokumen), 17 November 2026; diselaraskan dengan teks
+> live v2.0, 18 November 2026.
 > Acuan: `PRODUCT.md` dan `ARCHITECTURE.md` (11 layar).
 >
 > Konvensi penulisan di dokumen ini:
 > - Teks yang tampil di layar ditulis di antara tanda kutip.
 > - `[…]` = nilai dinamis yang diisi aplikasi (nama, angka hasil ukur,
 >   tanggal). Angka yang tampil selalu data real hasil ukur, data
->   server, atau input manual pengguna — bukan contoh.
+>   server, atau input manual pengguna, bukan contoh.
 > - "tidak tersedia" dipakai apa adanya bila browser tidak bisa
 >   membaca data tersebut.
 
@@ -52,7 +53,24 @@
 - Subjudul: "Periksa kondisi HP dari browser: kecepatan WiFi, baterai,
   penyimpanan, performa, dan keamanan. Tanpa memasang aplikasi."
 
+### Panel skor (hero)
+
+- Belum masuk (legenda skala skor): lencana "Baik" ("80 sampai 100"),
+  "Perlu diperhatikan" ("50 sampai 79"), "Bermasalah" ("di bawah 50"),
+  lalu "Skor HP Anda tampil di sini setelah masuk dan memeriksa HP."
+- Sudah masuk, ada skor: "Skor terakhir Anda", "Diperiksa [tanggal],
+  [jam]", tautan "Lihat dasbor".
+- Sudah masuk, belum ada pemeriksaan: "Belum ada pemeriksaan",
+  "Jalankan pemeriksaan pertama untuk melihat skor HP di sini.",
+  tombol "Mulai dari tes WiFi".
+- Sesi habis: "Sesi sudah berakhir", "Sesi sudah berakhir. Masuk lagi
+  untuk lanjut.", tombol "Masuk".
+- Gagal memuat skor: "Skor tidak dapat dimuat", "Skor tidak dapat
+  dimuat saat ini.", tombol "Coba lagi".
+
 ### 3 keunggulan
+
+- Judul bagian: "Yang bisa dilakukan di sini"
 
 1. Judul: "Tes WiFi sungguhan"
    Isi: "Kecepatan diukur langsung dari browser, bukan ditebak.
@@ -73,8 +91,17 @@
 
 ### Kejujuran satu baris (batasan web)
 
+- Judul bagian: "Yang perlu diketahui"
 - "Versi web mengukur koneksi Anda; data baterai, penyimpanan, dan
   performa diisi manual atau dari riwayat aplikasi Dokter HP."
+
+### Panduan perbaikan
+
+- Judul bagian: "Panduan perbaikan"
+- "Langkah demi langkah memperbaiki masalah HP yang paling sering
+  terjadi. Semua panduan bisa dibaca tanpa masuk."
+- Tiap kartu panduan menampilkan judul dan deskripsinya (isi lengkap
+  di `apps/web/src/data/panduan.ts`).
 
 ### Tautan APK
 
@@ -112,7 +139,15 @@
 
 - Sedang memproses masuk: "Memproses masuk…"
 - Masuk berhasil: "Berhasil masuk. Selamat datang kembali, [nama]."
-- Masuk gagal (lihat juga bagian 12, pesan galat).
+- Masuk gagal (lihat juga bagian 13, pesan galat).
+- Sedang memeriksa login Google: "Memeriksa login Google…"
+- Login Google belum disiapkan: tombol "Masuk dengan Google belum
+  disiapkan" + "Login Google belum disiapkan untuk situs ini. Coba
+  lagi nanti."
+- Status login Google tidak dapat diperiksa: tombol "Tidak dapat
+  memeriksa login Google" + "Status login Google tidak dapat
+  diperiksa saat ini. Periksa koneksi Anda, lalu coba lagi." +
+  tombol "Coba lagi"
 
 ---
 
@@ -127,7 +162,7 @@
 
 - "PIN adalah kode 4 sampai 8 angka yang hanya Anda ketahui. PIN
   dipakai untuk membuka aplikasi ini setiap kali sesi baru dimulai.
-  PIN tidak tersimpan sebagai angka asli — yang disimpan hanya
+  PIN tidak tersimpan sebagai angka asli. Yang disimpan hanya
   bentuk acaknya di server, jadi tidak ada yang bisa melihat PIN
   Anda, termasuk kami."
 
@@ -168,20 +203,23 @@
 
 ### Kategori skor
 
-| Kategori | Teks | Penjelasan |
-|---|---|---|
-| Baik | "Baik" | "Kondisi HP secara umum baik. Tidak ada masalah yang perlu segera diperbaiki." |
-| Cukup | "Cukup" | "Ada beberapa hal yang bisa diperbaiki. Lihat saran di bawah." |
-| Perlu perhatian | "Perlu perhatian" | "Ada masalah yang sebaiknya segera diperbaiki. Mulai dari yang paling atas." |
+Label kategori tampil sebagai lencana status (dari `labelStatus`
+status-warna, K-94):
+
+| Kategori | Teks |
+|---|---|
+| Baik | "Baik" |
+| Perlu diperhatikan | "Perlu diperhatikan" |
+| Bermasalah | "Bermasalah" |
 
 ### Diagnosis satu ketuk
 
 - Tombol: "Diagnosis satu ketuk"
 - Sedang menghitung: "Memeriksa…"
 - Selesai: "Pemeriksaan selesai. Skor Anda [skor] dari 100."
-- Penjelasan sumber skor (di bawah skor): "Dihitung dari: [daftar
-  komponen dan sumbernya — tes web / diisi manual / dari aplikasi
-  Dokter HP]."
+- Penjelasan sumber skor (di bawah skor): judul "Dihitung dari:",
+  lalu daftar komponen; tiap entri "[nama komponen]", "skor [skor],
+  [sumber]", dan lencana status "[label status]".
 
 ### Kartu dokter
 
@@ -204,14 +242,16 @@
 ### Tiga pemeriksaan terakhir
 
 - Judul: "Pemeriksaan terakhir"
-- Entri: "Skor [skor] — [kategori] — [tanggal], [jam]"
+- Entri: "Skor [skor] dari 100", "[tanggal], [jam]", dan lencana
+  status "[label status]"
+- Tautan di bawah daftar: "Lihat semua di Riwayat"
 - Empty state: "Belum ada pemeriksaan. Ketuk Diagnosis satu ketuk
   untuk mulai."
 
 ### Banner mode
 
-- Server tidak terjangkau: "Tidak tersambung ke server — hasil tes
-  tidak tersimpan"
+- Server tidak terjangkau: "Tidak tersambung ke server. Hasil tes
+  tidak tersimpan."
 - Penjelasan banner: "Tes WiFi tetap bisa dijalankan, tetapi
   hasilnya tidak tersimpan sampai sambungan ke server pulih."
 - Mode tanpa akun (tamu): "Anda belum masuk. Hasil tes tidak
@@ -269,6 +309,8 @@
   atau mulai cepat lalu jatuh di tengah jalan."
 - Sedang berjalan: "Mengukur… detik ke-[n] dari 30"
 - Hasil stabil: "Kecepatan stabil selama 30 detik."
+- Hasil tidak stabil: "Kecepatan tidak stabil selama 30 detik. Coba
+  tes lagi saat jaringan tidak dipakai perangkat lain."
 - Hasil jatuh: "Kecepatan mulai [awal] lalu jatuh ke [akhir].
   Pola seperti ini biasanya berasal dari router atau jaringan,
   bukan dari HP."
@@ -370,11 +412,15 @@
 - Penjelasan estimasi: "Perkiraan ini dihitung dari asumsi
   pemakaian rata-rata 10% per jam. Angka sebenarnya bisa berbeda
   tergantung pemakaian."
-- Label sumber dan waktu: "[sumber] — [tanggal], [jam]"
+- Label sumber dan waktu: "[tanggal], [jam]" di baris pertama,
+  "[sumber]" di baris kedua
 
 ### Input manual
 
 - Judul bagian: "Isi kondisi baterai"
+- Tombol buka/tutup formulir: "Tambah catatan" / "Tutup formulir"
+- Petunjuk mencatat: "Cara mencatat: lihat level baterai di HP,
+  ketuk Tambah catatan di bawah, lalu isi level dan statusnya."
 - Label bidang level: "Level baterai (%)"
 - Label bidang status: "Status"
 - Tombol: "Simpan"
@@ -408,8 +454,11 @@
 - "Versi web tidak bisa membaca penyimpanan HP secara langsung.
   Data di layar ini berasal dari riwayat aplikasi Dokter HP atau
   dari yang Anda isi sendiri. Versi web juga tidak bisa
-  membersihkan file di HP — hapus file yang tidak perlu langsung
+  membersihkan file di HP. Hapus file yang tidak perlu langsung
   dari HP."
+- Petunjuk mencatat: "Cara mencatat: lihat angkanya di Pengaturan >
+  Penyimpanan di HP, ketuk Tambah catatan di bawah, lalu salin
+  total dan yang terpakai ke sini."
 
 ### Entri riwayat
 
@@ -424,6 +473,7 @@
 ### Input manual
 
 - Judul bagian: "Isi pemakaian penyimpanan"
+- Tombol buka/tutup formulir: "Tambah catatan" / "Tutup formulir"
 - Label bidang total: "Total penyimpanan (GB)"
 - Label bidang terpakai: "Yang terpakai (GB)"
 - Tombol: "Simpan"
@@ -448,8 +498,11 @@
 - "Versi web tidak bisa membaca RAM, beban prosesor, atau suhu HP
   secara langsung. Data di layar ini berasal dari riwayat aplikasi
   Dokter HP atau dari yang Anda isi sendiri. Versi web juga tidak
-  bisa menutup aplikasi lain — tutup aplikasi dari layar aplikasi
+  bisa menutup aplikasi lain. Tutup aplikasi dari layar aplikasi
   terakhir di HP, atau mulai ulang HP bila terasa berat."
+- Petunjuk mencatat: "Cara mencatat: ketuk Tambah catatan di bawah,
+  pilih kondisi HP saat ini, dan isi detail yang diketahui. Info
+  perangkat bisa dilihat di Pengaturan > Tentang ponsel di HP."
 
 ### Entri riwayat
 
@@ -460,11 +513,13 @@
 - Label perangkat: "Perangkat"
 - Label versi Android: "Versi Android"
 - Label prosesor: "Prosesor"
-- Label sumber dan waktu: "[sumber] — [tanggal], [jam]"
+- Label sumber dan waktu: "[tanggal], [jam]" di baris pertama,
+  "[sumber]" di baris kedua
 
 ### Input manual
 
 - Judul bagian: "Isi kondisi performa"
+- Tombol buka/tutup formulir: "Tambah catatan" / "Tutup formulir"
 - Tombol: "Simpan"
 
 ### Empty state
@@ -491,12 +546,15 @@
 ### Bagian "Perlu ditinjau"
 
 - Judul bagian: "Perlu ditinjau"
-- Penjelasan: "Aplikasi di bawah ini meminta 4 izin berbahaya
-  atau lebih. Tinjau satu per satu: bila aplikasi tidak dikenal
-  atau tidak dipakai lagi, hapus dari Pengaturan > Aplikasi di HP."
-- Entri aplikasi: "[nama aplikasi] — [n] izin berbahaya"
+- Penjelasan: "Aplikasi di bawah meminta 4 izin berbahaya
+  atau lebih. Tinjau satu per satu."
+- Entri aplikasi: "[nama aplikasi]", "[n] izin berbahaya", dan
+  "[sumber] · [tanggal], [jam]"
 - Empty state bagian ini: "Tidak ada aplikasi yang perlu ditinjau
   dari data terakhir."
+- Petunjuk mencatat: "Cara mencatat: salin nama aplikasi dan jumlah
+  izin berbahayanya dari hasil pemindaian di aplikasi Dokter HP,
+  lalu ketuk Tambah catatan di bawah."
 
 ### Daftar aplikasi
 
@@ -535,7 +593,7 @@
 
 - "Jawaban di bawah ini adalah saran berdasarkan data yang
   tersedia, bukan vonis pasti. Bila masalah menyangkut kerusakan
-  fisik — misalnya HP jatuh atau terkena air — bawa ke teknisi."
+  fisik, misalnya HP jatuh atau terkena air, bawa ke teknisi."
 
 ### Batas pemakaian
 
@@ -573,10 +631,16 @@
 
 ### Entri
 
-- Entri pemeriksaan: "Skor [skor] — [kategori] — [tanggal], [jam]"
-- Entri WiFi: "Tes WiFi — [kecepatan] ([klasifikasi]) — [tanggal],
-  [jam]"
-- Entri AI: "Tanya jawab — [tanggal], [jam]"
+- Entri pemeriksaan: "Pemeriksaan kesehatan", "[tanggal], [jam]",
+  skor "[skor] dari 100" dan lencana status "[label status]", lalu
+  daftar komponen "[komponen]: [status] (skor [skor]), [sumber]".
+- Entri WiFi: lencana "Tes WiFi" (ditambah "Tes bertahan 30 detik"
+  bila tes bertahan), "[tanggal], [jam]", "[kecepatan]
+  ([klasifikasi])", "Nama WiFi: [SSID]", "Latensi HTTP: [n] ms",
+  "Kekuatan sinyal: [label]", "Sumber: [sumber]".
+- Entri AI: lencana "Diagnosis AI", "[tanggal], [jam]",
+  "Tanya jawab", cuplikan pertanyaan, dan "Lihat tanya jawab
+  lengkap".
 
 ### Tombol PDF dan hapus
 
@@ -621,27 +685,53 @@
 - Judul bagian: "PIN aplikasi"
 - Penjelasan: "PIN melindungi riwayat pemeriksaan di aplikasi
   ini. PIN diminta setiap kali sesi baru dimulai."
-- Bila PIN belum diatur — isi: "PIN belum diatur. Aplikasi
+- Bila PIN belum diatur: lencana "Belum diatur" + "Aplikasi
   langsung terbuka tanpa PIN."
-- Tombol atur PIN: "Atur PIN"
-- Bila PIN sudah diatur — isi: "PIN sudah diatur."
-- Tombol ubah PIN: "Ubah PIN"
-- Tombol hapus PIN: "Hapus PIN"
+- Bila PIN sudah diatur: lencana "PIN aktif"
+- Tombol: "Atur PIN" (bila belum diatur) / "Ubah PIN" (bila sudah
+  diatur), membuka layar /pengaturan/pin.
+
+### Atur PIN — `/pengaturan/pin`
+
+- Judul layar: "PIN aplikasi"
+- Penjelasan: "PIN melindungi riwayat pemeriksaan di aplikasi ini.
+  PIN diminta setiap kali sesi baru dimulai."
+- Bila PIN belum diatur: lencana "PIN belum diatur" + "Aplikasi
+  langsung terbuka tanpa PIN."
+- Bila PIN sudah diatur: lencana "PIN sudah diatur"
 - Label PIN baru: "PIN baru (4–8 angka)"
 - Label ulangi PIN: "Ulangi PIN baru"
+- Label PIN lama: "PIN lama"
+- PIN lama diperlukan: "Masukkan PIN lama untuk mengubah PIN."
+- PIN lama salah: "PIN lama salah, coba lagi."
 - PIN tidak cocok: "PIN yang diulang tidak sama. Periksa lagi."
 - PIN tidak valid: "PIN harus 4 sampai 8 angka."
+- PIN lemah: "PIN terlalu mudah ditebak. Pilih kombinasi yang tidak
+  berurutan dan tidak semua sama. Sebaiknya pakai 6 sampai 8 digit
+  yang acak."
+- Tombol simpan: "Atur PIN" (bila belum diatur) / "Ubah PIN" (bila
+  sudah diatur)
 - PIN berhasil diatur: "PIN berhasil diatur."
 - PIN berhasil diubah: "PIN berhasil diubah."
+- Sesi masih terkunci setelah atur PIN: "Sesi masih terkunci." +
+  tautan "Buka dengan PIN baru"
+- Tombol hapus PIN: "Hapus PIN"
 - Konfirmasi hapus PIN — isi: "PIN akan dihapus. Aplikasi tidak
   lagi meminta PIN saat dibuka."
+- Tombol konfirmasi hapus: "Ya, hapus"
 - PIN berhasil dihapus: "PIN berhasil dihapus."
 
 ### Sesi
 
 - Judul bagian: "Sesi aktif"
-- Penjelasan: "Perangkat yang sedang masuk dengan akun Anda."
-- Entri sesi: "[perangkat/browser] — terakhir aktif [waktu]"
+- Penjelasan: "Perangkat yang sedang masuk dengan akun Anda. Bila
+  ada sesi yang tidak dikenal, keluar dari sesi itu dan periksa
+  keamanan akun Google Anda."
+- Entri sesi: "[browser] di [perangkat]" (+ lencana "Sesi ini"
+  untuk sesi yang sedang dipakai), "Masuk sejak [tanggal], [jam]",
+  "Berlaku sampai [tanggal], [jam]", "IP terakhir: [IP]"
+- Bila tidak ada sesi: "Tidak ada sesi aktif" + "Daftar sesi
+  kosong. Muat ulang untuk memeriksa lagi." + tombol "Muat ulang"
 - Label sesi ini: "Sesi ini"
 - Tombol keluar dari sesi lain: "Keluar dari sesi ini"
 - Berhasil keluar dari sesi lain: "Berhasil keluar dari sesi itu."
@@ -652,8 +742,8 @@
 
 - Judul bagian: "Hapus akun"
 - Peringatan: "Menghapus akun akan menghapus profil dan seluruh
-  data Anda — riwayat pemeriksaan, tes WiFi, dan tanya jawab —
-  secara permanen. Tindakan ini tidak bisa dibatalkan."
+  data Anda secara permanen, termasuk riwayat pemeriksaan, tes WiFi,
+  dan tanya jawab. Tindakan ini tidak bisa dibatalkan."
 - Label konfirmasi: "Ketik HAPUS untuk mengonfirmasi"
 - Tombol hapus akun: "Hapus akun saya"
 - Tombol konfirmasi akhir: "Ya, hapus akun saya"

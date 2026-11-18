@@ -2,13 +2,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, fetchJson, panggilApi } from "../lib/api";
 import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { MeterStrip } from "../components/ui/MeterStrip";
+import { Skeleton } from "../components/ui/Skeleton";
+import { StatusBadge } from "../components/ui/StatusBadge";
+import {
+  labelStatus,
+  statusDariDoctor,
+  statusDariSkor,
+  tokenStatus,
+} from "../lib/status-warna";
 import {
   URUTAN_KOMPONEN,
   formatKecepatan,
   formatSumber,
   formatTanggalWaktu,
   generatePdf,
-  kategoriSkor,
   klasifikasiKecepatan,
   labelKomponen,
   labelSinyal,
@@ -30,6 +40,19 @@ import {
 // Teks layar mengikuti docs/copy.md bagian 11. Desain mengikuti design
 // lock hitam/putih dan token a11y (K-11): teks minimal Zinc 400,
 // border komponen interaktif minimal Zinc 500, target sentuh 48x48 px.
+//
+// Redesign v2.0 (docs/redesign-v20-spec.md §8.5, mode Operate,
+// "Alat ukur, hidup"): tiap entri pemeriksaan memakai cip skor berwarna
+// lewat helper status-warna (statusDariSkor) + label kategori teks,
+// angka skor tampil besar dengan strip meter zona 80/50, dan warna
+// status komponen memakai helper yang sama (statusDariDoctor). Warna
+// status TIDAK PERNAH dipetakan di file ini — semua lewat
+// lib/status-warna.ts, dan StatusBadge/Card memakai kosakata status
+// yang sama (StatusWarna, K-95), jadi tidak ada adaptor di sini.
+// Alasan desain (R-31): skor besar + meter = angka ukur dibaca dulu;
+// cip berwarna = keadaan terbaca sekilas; kartu bertinta status =
+// keadaan entri terlihat tanpa membaca teks; EmptyState + CTA =
+// halaman kosong memberi langkah berikutnya, bukan jalan buntu.
 
 // Jumlah maksimum entri yang diminta ke API (batas atas kontrak:
 // limit 1-100). Halaman mengambil 100 entri terbaru gabungan;
@@ -194,18 +217,24 @@ function pathHapus(entri: EntriRiwayat): string {
   return `/api/history/${entri.jenis}/${entri.id}`;
 }
 
-function judulWifi(data: WifiReport): string {
-  const waktu = formatTanggalWaktu(data.dibuat_pada);
+// Baris utama entri WiFi: kecepatan unduh bila ada, latensi HTTP bila
+// kecepatan tidak ada, judul polos bila keduanya tidak ada. Fakta yang
+// sama dengan judul v1.0, hanya dipisah dari tanggal (tanggal tampil
+// di baris atas kartu) dan tanpa pemisah em dash.
+function utamaWifi(data: WifiReport): { utama: string; tambahan: string | null } {
   if (
     data.kecepatan_unduh_kbps !== null &&
     data.kecepatan_unduh_kbps !== undefined
   ) {
-    return `Tes WiFi — ${formatKecepatan(data.kecepatan_unduh_kbps)} (${klasifikasiKecepatan(data.kecepatan_unduh_kbps)}) — ${waktu}`;
+    return {
+      utama: formatKecepatan(data.kecepatan_unduh_kbps),
+      tambahan: `(${klasifikasiKecepatan(data.kecepatan_unduh_kbps)})`,
+    };
   }
   if (data.ping_ms !== null && data.ping_ms !== undefined) {
-    return `Tes WiFi — latensi HTTP ${data.ping_ms} ms — ${waktu}`;
+    return { utama: `Latensi HTTP ${data.ping_ms} ms`, tambahan: null };
   }
-  return `Tes WiFi — ${waktu}`;
+  return { utama: "Tes WiFi", tambahan: null };
 }
 
 interface EntriItemProps {
@@ -225,132 +254,181 @@ function EntriItem({
   onBatalHapus,
   onKonfirmasiHapus,
 }: EntriItemProps) {
+  // Status kartu hanya bermakna untuk entri pemeriksaan (skor punya
+  // ambang 80/50); entri WiFi dan AI memakai kartu netral karena tidak
+  // ada pemetaan status kanonis untuk kecepatan maupun tanya jawab —
+  // jangan mengarangnya.
+  const statusKartu =
+    entri.jenis === "kesehatan" ? statusDariSkor(entri.data.skor) : undefined;
   return (
-    <li className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
-      {entri.jenis === "kesehatan" && (
-        <div>
-          <span className="inline-block rounded-full border border-zinc-500 px-3 py-1 text-xs font-medium text-zinc-300">
-            Pemeriksaan kesehatan
-          </span>
-          <p className="mt-3 text-base font-semibold text-zinc-100">
-            Skor {entri.data.skor} — {kategoriSkor(entri.data.skor)} —{" "}
-            {formatTanggalWaktu(entri.data.dibuat_pada)}
-          </p>
-          <ul className="mt-2 space-y-1 text-sm text-zinc-300">
-            {URUTAN_KOMPONEN.map((kunci) => {
-              const komponen = entri.data.ringkasan?.[kunci];
-              if (!komponen) return null;
-              return (
-                <li key={kunci}>
-                  {labelKomponen(kunci)}:{" "}
-                  {labelStatusKomponen(komponen.status)} (skor{" "}
-                  {komponen.skor}) — {formatSumber(komponen.sumber)}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-
-      {entri.jenis === "wifi" && (
-        <div>
-          <div className="flex flex-wrap gap-2">
-            <span className="inline-block rounded-full border border-zinc-500 px-3 py-1 text-xs font-medium text-zinc-300">
-              Tes WiFi
-            </span>
-            {entri.data.durasi_tes_detik === 30 && (
-              <span className="inline-block rounded-full border border-zinc-500 px-3 py-1 text-xs font-medium text-zinc-300">
-                Tes bertahan 30 detik
-              </span>
-            )}
-          </div>
-          <p className="mt-3 text-base font-semibold text-zinc-100">
-            {judulWifi(entri.data)}
-          </p>
-          <ul className="mt-2 space-y-1 text-sm text-zinc-300">
-            {entri.data.ssid && <li>Nama WiFi: {entri.data.ssid}</li>}
-            {entri.data.ping_ms !== null &&
-              entri.data.ping_ms !== undefined && (
-                <li>Latensi HTTP: {entri.data.ping_ms} ms</li>
-              )}
-            {entri.data.kekuatan_sinyal && (
-              <li>
-                Kekuatan sinyal: {labelSinyal(entri.data.kekuatan_sinyal)}
-              </li>
-            )}
-            <li>Sumber: {formatSumber(entri.data.sumber)}</li>
-          </ul>
-        </div>
-      )}
-
-      {entri.jenis === "ai" && (
-        <div>
-          <span className="inline-block rounded-full border border-zinc-500 px-3 py-1 text-xs font-medium text-zinc-300">
-            Diagnosis AI
-          </span>
-          <p className="mt-3 text-base font-semibold text-zinc-100">
-            Tanya jawab — {formatTanggalWaktu(entri.data.dibuat_pada)}
-          </p>
-          <p className="mt-2 line-clamp-2 text-sm text-zinc-300">
-            {entri.data.pertanyaan}
-          </p>
-          <details className="mt-3">
-            <summary className="cursor-pointer text-sm font-medium text-zinc-100 underline underline-offset-4">
-              Lihat tanya jawab lengkap
-            </summary>
-            <div className="mt-3 space-y-3 text-sm text-zinc-300">
-              <p>
-                <span className="font-semibold text-zinc-100">
-                  Pertanyaan:{" "}
-                </span>
-                {entri.data.pertanyaan}
+    <li>
+      <Card status={statusKartu} padding="lg">
+        {entri.jenis === "kesehatan" && (
+          <div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <p className="text-sm font-medium text-[var(--color-text-secondary)]">
+                Pemeriksaan kesehatan
               </p>
-              <p className="whitespace-pre-wrap">
-                <span className="font-semibold text-zinc-100">Jawaban: </span>
-                {entri.data.jawaban}
+              <p className="text-sm text-[var(--color-text-muted)]">
+                {formatTanggalWaktu(entri.data.dibuat_pada)}
               </p>
             </div>
-          </details>
-        </div>
-      )}
-
-      {konfirmasi ? (
-        <div
-          role="alert"
-          className="mt-4 rounded-lg border border-red-400/40 bg-red-400/10 p-4"
-        >
-          <p className="font-semibold text-zinc-100">Hapus entri ini?</p>
-          <p className="mt-1 text-sm text-zinc-300">
-            Entri ini akan dihapus dari riwayat Anda.
-          </p>
-          <div className="mt-3 flex gap-3">
-            <Button
-              variant="danger"
-              onClick={onKonfirmasiHapus}
-              loading={menghapus}
-              className="flex-1"
-            >
-              Ya, hapus
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={onBatalHapus}
-              disabled={menghapus}
-              className="flex-1"
-            >
-              Batal
-            </Button>
+            <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <span
+                className="dh-numeric text-[length:var(--text-display)] leading-[var(--leading-display)] font-bold"
+                style={{ color: tokenStatus(statusDariSkor(entri.data.skor)).teks }}
+              >
+                {entri.data.skor}
+              </span>
+              <span className="text-sm text-[var(--color-text-muted)]">
+                dari 100
+              </span>
+              <StatusBadge status={statusDariSkor(entri.data.skor)}>
+                {labelStatus(statusDariSkor(entri.data.skor))}
+              </StatusBadge>
+            </p>
+            <MeterStrip
+              value={entri.data.skor}
+              className="mt-3"
+              ariaLabel={`Skor ${entri.data.skor} dari 100, ${labelStatus(statusDariSkor(entri.data.skor))}`}
+            />
+            <ul className="mt-3 space-y-1 text-sm text-[var(--color-text-secondary)]">
+              {URUTAN_KOMPONEN.map((kunci) => {
+                const komponen = entri.data.ringkasan?.[kunci];
+                if (!komponen) return null;
+                return (
+                  <li key={kunci}>
+                    {labelKomponen(kunci)}:{" "}
+                    <span
+                      className="font-medium"
+                      style={{
+                        color: tokenStatus(statusDariDoctor(komponen.status))
+                          .teks,
+                      }}
+                    >
+                      {labelStatusKomponen(komponen.status)}
+                    </span>{" "}
+                    (skor {komponen.skor}), {formatSumber(komponen.sumber)}
+                  </li>
+                );
+              })}
+            </ul>
           </div>
-        </div>
-      ) : (
-        <Button
-          variant="danger"
-          onClick={onMintaHapus}
-          className="mt-4"
-        >
-          Hapus
-        </Button>
-      )}
+        )}
+
+        {entri.jenis === "wifi" && (
+          <div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <div className="flex flex-wrap gap-2">
+                <StatusBadge status="netral">Tes WiFi</StatusBadge>
+                {entri.data.durasi_tes_detik === 30 && (
+                  <StatusBadge status="netral">
+                    Tes bertahan 30 detik
+                  </StatusBadge>
+                )}
+              </div>
+              <p className="text-sm text-[var(--color-text-muted)]">
+                {formatTanggalWaktu(entri.data.dibuat_pada)}
+              </p>
+            </div>
+            <p className="mt-3 flex flex-wrap items-baseline gap-x-2">
+              <span className="dh-numeric text-xl font-semibold text-[var(--color-text-primary)]">
+                {utamaWifi(entri.data).utama}
+              </span>
+              {utamaWifi(entri.data).tambahan && (
+                <span className="text-sm text-[var(--color-text-muted)]">
+                  {utamaWifi(entri.data).tambahan}
+                </span>
+              )}
+            </p>
+            <ul className="mt-2 space-y-1 text-sm text-[var(--color-text-secondary)]">
+              {entri.data.ssid && <li>Nama WiFi: {entri.data.ssid}</li>}
+              {entri.data.ping_ms !== null &&
+                entri.data.ping_ms !== undefined && (
+                  <li>Latensi HTTP: {entri.data.ping_ms} ms</li>
+                )}
+              {entri.data.kekuatan_sinyal && (
+                <li>
+                  Kekuatan sinyal: {labelSinyal(entri.data.kekuatan_sinyal)}
+                </li>
+              )}
+              <li>Sumber: {formatSumber(entri.data.sumber)}</li>
+            </ul>
+          </div>
+        )}
+
+        {entri.jenis === "ai" && (
+          <div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <StatusBadge status="netral">Diagnosis AI</StatusBadge>
+              <p className="text-sm text-[var(--color-text-muted)]">
+                {formatTanggalWaktu(entri.data.dibuat_pada)}
+              </p>
+            </div>
+            <p className="mt-3 text-base font-semibold text-[var(--color-text-primary)]">
+              Tanya jawab
+            </p>
+            <p className="mt-2 line-clamp-2 text-sm text-[var(--color-text-secondary)]">
+              {entri.data.pertanyaan}
+            </p>
+            <details className="mt-3">
+              <summary className="cursor-pointer text-sm font-medium text-[var(--color-text-primary)] underline underline-offset-4">
+                Lihat tanya jawab lengkap
+              </summary>
+              <div className="mt-3 space-y-3 text-sm text-[var(--color-text-secondary)]">
+                <p>
+                  <span className="font-semibold text-[var(--color-text-primary)]">
+                    Pertanyaan:{" "}
+                  </span>
+                  {entri.data.pertanyaan}
+                </p>
+                <p className="whitespace-pre-wrap">
+                  <span className="font-semibold text-[var(--color-text-primary)]">
+                    Jawaban:{" "}
+                  </span>
+                  {entri.data.jawaban}
+                </p>
+              </div>
+            </details>
+          </div>
+        )}
+
+        {konfirmasi ? (
+          <div
+            role="alert"
+            className="mt-4 rounded-lg border border-[var(--color-error-border)] bg-[var(--color-error-bg)] p-4"
+          >
+            <p className="font-semibold text-[var(--color-text-primary)]">
+              Hapus entri ini?
+            </p>
+            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+              Entri ini akan dihapus dari riwayat Anda.
+            </p>
+            <div className="mt-3 flex gap-3">
+              <Button
+                variant="danger"
+                onClick={onKonfirmasiHapus}
+                loading={menghapus}
+                className="flex-1"
+              >
+                Ya, hapus
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={onBatalHapus}
+                disabled={menghapus}
+                className="flex-1"
+              >
+                Batal
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button variant="danger" onClick={onMintaHapus} className="mt-4">
+            Hapus
+          </Button>
+        )}
+      </Card>
     </li>
   );
 }
@@ -454,9 +532,9 @@ export default function RiwayatPage() {
   };
 
   return (
-    <div className="mx-auto min-h-screen w-full max-w-2xl bg-black px-4 py-6 text-zinc-100 sm:px-6">
+    <div className="mx-auto min-h-dvh w-full max-w-3xl bg-black px-4 py-6 text-zinc-100 sm:px-6">
       <h1 className="text-2xl font-bold tracking-tight">Riwayat</h1>
-      <p className="mt-1 text-sm text-zinc-300">
+      <p className="mt-1 text-sm text-[var(--color-text-muted)]">
         Semua hasil pemeriksaan dan tes WiFi Anda.
       </p>
 
@@ -464,10 +542,10 @@ export default function RiwayatPage() {
         {pesan && (
           <p
             role={pesan.jenis === "galat" ? "alert" : "status"}
-            className={`mt-4 rounded-lg border p-4 text-sm ${
+            className={`mt-4 rounded-lg border p-4 text-sm text-[var(--color-text-primary)] ${
               pesan.jenis === "galat"
-                ? "border-red-400/40 bg-red-400/10 text-zinc-100"
-                : "border-green-400/40 bg-green-400/10 text-zinc-100"
+                ? "border-[var(--color-error-border)] bg-[var(--color-error-bg)]"
+                : "border-[var(--color-success-border)] bg-[var(--color-success-bg)]"
             }`}
           >
             {pesan.teks}
@@ -477,13 +555,12 @@ export default function RiwayatPage() {
 
       {status === "memuat" && (
         <div role="status" aria-label="Mengambil data" className="mt-6">
-          <p className="text-sm text-zinc-300">Mengambil data…</p>
+          <p className="text-sm text-[var(--color-text-muted)]">
+            Mengambil data…
+          </p>
           <div className="mt-4 space-y-3" aria-hidden="true">
             {[0, 1, 2].map((indeks) => (
-              <div
-                key={indeks}
-                className="h-24 animate-pulse rounded-xl bg-zinc-900"
-              />
+              <Skeleton key={indeks} height={132} rounded="lg" />
             ))}
           </div>
         </div>
@@ -492,9 +569,9 @@ export default function RiwayatPage() {
       {status === "galat" && (
         <div
           role="alert"
-          className="mt-6 rounded-xl border border-red-400/40 bg-red-400/10 p-6"
+          className="mt-6 rounded-xl border border-[var(--color-error-border)] bg-[var(--color-error-bg)] p-6"
         >
-          <p className="font-semibold text-zinc-100">
+          <p className="font-semibold text-[var(--color-text-primary)]">
             Data tidak bisa dimuat. Coba lagi.
           </p>
           <Button
@@ -523,26 +600,20 @@ export default function RiwayatPage() {
 
       {status === "siap" && (
         <div>
-          <Button
-            onClick={() => void unduhPdf()}
-            loading={membuatPdf}
-            fullWidth
-            className="mt-6"
-          >
-            Unduh laporan PDF
-          </Button>
-
-          {adaLagi && (
-            <p className="mt-3 text-xs text-zinc-400">
-              Menampilkan 100 entri terbaru. Entri yang lebih lama tidak
-              tampil di halaman ini.
-            </p>
-          )}
+          <div className="mt-6 flex">
+            <Button
+              onClick={() => void unduhPdf()}
+              loading={membuatPdf}
+              className="w-full sm:w-auto"
+            >
+              {membuatPdf ? "Membuat laporan…" : "Unduh laporan PDF"}
+            </Button>
+          </div>
 
           <div className="mt-6">
             <p
               id="label-filter-riwayat"
-              className="text-sm font-medium text-zinc-100"
+              className="text-sm font-medium text-[var(--color-text-primary)]"
             >
               Tampilkan
             </p>
@@ -570,23 +641,33 @@ export default function RiwayatPage() {
                 );
               })}
             </div>
-            <p className="mt-2 text-xs text-zinc-400">Terbaru dulu</p>
+            <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+              Terbaru dulu
+            </p>
           </div>
 
           {entri.length === 0 ? (
-            <div className="mt-6 rounded-xl border border-zinc-800 bg-zinc-900 p-6 text-center">
-              <p className="text-base font-semibold text-zinc-100">
-                Belum ada riwayat
-              </p>
-              <p className="mt-2 text-sm text-zinc-300">
-                Hasil pemeriksaan dan tes WiFi yang tersimpan akan tampil di
-                sini. Jalankan diagnosis atau tes WiFi untuk mulai.
-              </p>
+            <div className="mt-6">
+              <EmptyState
+                title="Belum ada riwayat"
+                description="Hasil pemeriksaan dan tes WiFi yang tersimpan akan tampil di sini. Jalankan diagnosis atau tes WiFi untuk mulai."
+                action={
+                  <Link
+                    to="/dashboard"
+                    className="inline-flex min-h-[48px] items-center justify-center rounded-lg bg-white px-5 text-base font-medium text-black transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:bg-zinc-200 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                  >
+                    Jalankan diagnosis
+                  </Link>
+                }
+              />
             </div>
           ) : entriTerfilter.length === 0 ? (
-            <p className="mt-6 rounded-xl border border-zinc-800 bg-zinc-900 p-6 text-center text-sm text-zinc-300">
-              Belum ada riwayat untuk jenis ini.
-            </p>
+            <div className="mt-6">
+              <EmptyState
+                title="Belum ada riwayat untuk jenis ini"
+                description="Coba filter lain untuk melihat entri yang tersimpan."
+              />
+            </div>
           ) : (
             <ul className="mt-4 space-y-3">
               {entriTerfilter.map((item) => (
@@ -601,6 +682,13 @@ export default function RiwayatPage() {
                 />
               ))}
             </ul>
+          )}
+
+          {adaLagi && (
+            <p className="mt-4 text-xs text-[var(--color-text-muted)]">
+              Menampilkan 100 entri terbaru. Entri yang lebih lama tidak
+              tampil di halaman ini.
+            </p>
           )}
         </div>
       )}

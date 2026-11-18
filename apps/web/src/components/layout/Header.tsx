@@ -2,18 +2,22 @@ import { useEffect } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useAppStore } from "../../store/useAppStore";
 
-// Header aplikasi (Tim Shell/Routing). Menempel di atas, design lock
-// hitam/putih, target sentuh minimal 48 px (K-11). Halaman aktif
-// ditandai tebal + garis bawah, bukan hanya warna (a11y.md §6.6).
+// Header aplikasi (Tim Layout, redesign v2.0). Menempel di atas,
+// design lock hitam/putih, target sentuh minimal 48 px (K-11).
+// Halaman aktif ditandai PIL berisi (latar permukaan terangkat +
+// teks putih tebal): bentuk + bobot + latar yang membedakan, bukan
+// sekadar perbedaan abu dan bukan hanya warna (a11y.md §6.6).
+// Bahasa penanda yang sama dipakai navigasi bawah (pil di balik
+// ikon aktif), jadi satu sistem aktif di seluruh shell.
+// Fokus keyboard memakai aturan global :focus-visible di
+// styles/tokens.css (satu sumber kebenaran, seperti ui/Button),
+// bukan kelas fokus lokal yang menduplikasi aturan itu.
 // Header sadar-auth: status sesi dimuat dari store (GET /api/auth/me
 // sekali, lalu dicek ulang saat rute berubah selama belum masuk, agar
 // status segar setelah masuk dari /masuk). Bila masuk, Header
 // menampilkan nama pengguna + tautan Dashboard; bila tidak, tombol
 // Masuk. RequireAuth tetap memeriksa sesi segar di rute yang butuh
 // masuk (termasuk status sesi_terkunci).
-
-const FOKUS =
-  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-2";
 
 const TAUTAN_NAV = [
   { ke: "/", label: "Beranda" },
@@ -36,11 +40,11 @@ export default function Header() {
   }, [lokasi.pathname, statusMasuk, muatStatusMasuk]);
 
   return (
-    <header className="sticky top-0 z-10 border-b border-zinc-800 bg-black">
-      <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between gap-4 px-4">
+    <header className="sticky top-0 z-10 border-b border-[var(--color-border)] bg-[var(--color-bg)]">
+      <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-4 px-4">
         <Link
           to="/"
-          className={`flex min-h-[48px] items-center gap-2 rounded-lg ${FOKUS}`}
+          className="flex min-h-[48px] items-center gap-2 rounded-lg"
         >
           <img
             src="/logo.svg"
@@ -61,10 +65,10 @@ export default function Header() {
                   to={tautan.ke}
                   end={tautan.ke === "/"}
                   className={({ isActive }) =>
-                    `flex min-h-[48px] items-center rounded-lg px-3 text-sm ${FOKUS} ${
+                    `flex min-h-[48px] items-center rounded-lg px-3 text-sm transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)] ${
                       isActive
-                        ? "font-semibold text-white underline underline-offset-4"
-                        : "text-zinc-400"
+                        ? "bg-[var(--color-surface-raised)] font-semibold text-white"
+                        : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text-primary)]"
                     }`
                   }
                 >
@@ -77,13 +81,13 @@ export default function Header() {
         {statusMasuk === "masuk" ? (
           <div className="flex items-center gap-2">
             {namaPengguna ? (
-              <span className="hidden max-w-40 truncate text-sm text-zinc-300 md:block">
+              <span className="hidden max-w-40 truncate text-sm text-[var(--color-text-secondary)] md:block">
                 {namaPengguna}
               </span>
             ) : null}
             <Link
               to="/dashboard"
-              className={`flex min-h-[48px] items-center rounded-lg bg-white px-4 text-sm font-semibold text-black ${FOKUS}`}
+              className="flex min-h-[48px] items-center rounded-lg bg-white px-4 text-sm font-semibold text-black transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:bg-zinc-200 active:scale-[0.98]"
             >
               Dashboard
             </Link>
@@ -91,7 +95,7 @@ export default function Header() {
         ) : (
           <Link
             to="/masuk"
-            className={`flex min-h-[48px] items-center rounded-lg bg-white px-4 text-sm font-semibold text-black ${FOKUS}`}
+            className="flex min-h-[48px] items-center rounded-lg bg-white px-4 text-sm font-semibold text-black transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:bg-zinc-200 active:scale-[0.98]"
           >
             Masuk
           </Link>

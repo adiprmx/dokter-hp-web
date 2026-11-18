@@ -180,7 +180,9 @@ target, karena pilihan ini mengubah seluruh foreign key dan RLS.
   tabel saat impor — langkah yang rawan salah dan wajib diuji di
   database staging terlebih dahulu.
 - `google_sub` dipetakan ke identitas Google di Supabase Auth;
-  pengguna masuk ulang dengan Google setelah migrasi. PIN (hash +
+  kolom ini tidak ada di skema D1 saat ini — nilainya baru
+  diperoleh saat pengguna masuk ulang dengan Google setelah
+  migrasi. PIN (hash +
   salt) tetap disimpan di tabel aplikasi (`public.users` atau
   kolom tambahan di `profiles`) karena Supabase Auth tidak
   mengenal PIN aplikasi.
@@ -661,8 +663,11 @@ dinyatakan selesai bila ada satu pun pemeriksaan wajib yang gagal.
    tiga nilai, `sumber` salah satu dari tiga nilai, `detik_ke`
    0–29, `terkunci` 0 atau 1.
 5. **Keunikan**: tidak ada duplikat `id` per tabel, tidak ada
-   duplikat `(wifi_report_id, detik_ke)`, tidak ada duplikat
-   `google_sub` dan `token_hash`.
+   duplikat `(wifi_report_id, detik_ke)`, dan tidak ada duplikat
+   `token_hash`. Keunikan `google_sub` tidak diperiksa di sini
+   karena kolom itu tidak ada di skema D1 — pemeriksaannya ada
+   di validasi pasca-migrasi (bagian 6.2 baris 7, constraint
+   `UNIQUE` aktif di Postgres).
 6. **Orphan check**: tidak ada `user_id` yang tidak ada di
    `users`, tidak ada `health_check_id` yang tidak ada di
    `health_checks`, tidak ada `wifi_report_id` yang tidak ada di

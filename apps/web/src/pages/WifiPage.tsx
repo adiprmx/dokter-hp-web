@@ -10,8 +10,16 @@
 //
 // Catatan: rute /wifi didaftarkan di App.tsx oleh koordinator;
 // file ini hanya komponen halamannya.
+//
+// Redesign v2.0 (docs/redesign-v20-spec.md §8.3): angka kecepatan
+// memakai skala display, verdict tes bertahan berwarna lewat
+// helper status-warna (statusDariVerdict) + label teks, info
+// jaringan dalam kartu status, saran memakai Card status.
+// Logika tes, ambang verdict (nilaiTesBertahan kanonis), dan alur
+// simpan TIDAK BERUBAH — hanya tampilan yang dirombak.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { checkApiHealth, panggilApi } from "../lib/api";
 import {
@@ -30,7 +38,19 @@ import {
   type HasilTesBertahan,
   type KlasifikasiKecepatan,
   type SampelBertahan,
+  type VerdictBertahan,
 } from "../lib/speedtest";
+import {
+  statusDariKlasifikasiKecepatan,
+  statusDariVerdict,
+  tokenStatus,
+  type StatusWarna,
+} from "../lib/status-warna";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { SkeletonText } from "../components/ui/Skeleton";
+import { StatusBadge } from "../components/ui/StatusBadge";
 import { SustainedChart } from "../components/charts/SustainedChart";
 import RekomendasiWifi, {
   rangkumRekomendasi,
@@ -184,9 +204,13 @@ function teksVerdict(hasil: HasilTesBertahan): string {
       "berasal dari router atau jaringan, bukan dari HP."
     );
   }
+  // Kalimat yang sama dipakai SustainedChart (teks final copy.md §5).
+  // Tanpa klaim "naik turun": verdict ini juga muncul saat kecepatan
+  // konstan tapi lambat (rata-rata < 1000 KB/detik), yang grafiknya
+  // datar, bukan naik turun.
   return (
-    "Kecepatan tidak stabil selama 30 detik — naik turun tanpa pola " +
-    "yang jelas. Coba tes lagi saat jaringan tidak dipakai perangkat lain."
+    "Kecepatan tidak stabil selama 30 detik. " +
+    "Coba tes lagi saat jaringan tidak dipakai perangkat lain."
   );
 }
 
@@ -194,6 +218,57 @@ function labelSumber(sumber: string): string {
   if (sumber === "apk") return "Dari aplikasi Dokter HP";
   if (sumber === "manual") return "Diisi manual";
   return "Dari tes web";
+}
+
+/** Label verdict tes bertahan untuk tampilan (kata dari copy.md 5). */
+function labelVerdict(verdict: VerdictBertahan): string {
+  if (verdict === "bertahan") return "Bertahan";
+  if (verdict === "jatuh") return "Jatuh";
+  return "Tidak stabil";
+}
+
+/**
+ * Pisah hasil formatKecepatan ("1,2 MB/detik") jadi angka dan
+ * satuan, agar angka display bisa besar tanpa satuannya ikut
+ * membesar dan tanpa meluber di layar 360 px.
+ */
+function pisahKecepatan(kbps: number): { angka: string; satuan: string } {
+  const teks = formatKecepatan(kbps);
+  const spasi = teks.indexOf(" ");
+  if (spasi === -1) return { angka: teks, satuan: "" };
+  return { angka: teks.slice(0, spasi), satuan: teks.slice(spasi + 1) };
+}
+
+/**
+ * Panel status di DALAM kartu bagian (verdict, kotak galat).
+ * Bukan Card bersarang: panel ini callout kecil (radius lg,
+ * padding 4) yang menandai keadaan satu blok isi, sementara Card
+ * adalah permukaan bagian. Warna berasal dari helper
+ * status-warna, sama seperti Card.
+ */
+function PanelStatus({
+  status,
+  className = "",
+  children,
+  ...rest
+}: {
+  status: StatusWarna;
+  children: ReactNode;
+  className?: string;
+} & HTMLAttributes<HTMLDivElement>) {
+  const token = tokenStatus(status);
+  return (
+    <div
+      className={`rounded-lg border p-4 ${className}`}
+      style={{
+        backgroundColor: token.latar,
+        borderColor: token.bingkai,
+      }}
+      {...rest}
+    >
+      {children}
+    </div>
+  );
 }
 
 // ------------------------------------------------------------------
@@ -577,58 +652,71 @@ export default function WifiPage() {
     latensiMs: hasil?.latensiMs ?? null,
     sinyalDbm: dbmTerisi,
   };
+  // Angka hero dipisah angka/satuan agar tidak meluber di 360 px.
+  const liveTampil =
+    liveKbps === null ? null : pisahKecepatan(liveKbps);
+  const hasilTampil =
+    hasil === null ? null : pisahKecepatan(hasil.kecepatanKbps);
+  // Status kartu info jaringan mengikuti verdict tes bertahan bila
+  // sudah ada (satu-satunya penilaian kondisi jaringan yang terukur);
+  // sebelum itu netral, karena belum ada yang dinilai.
+  const statusJaringan: StatusWarna = bertahan.hasil
+    ? statusDariVerdict(bertahan.hasil.verdict)
+    : "netral";
+  const statusVerdict: StatusWarna | null = bertahan.hasil
+    ? statusDariVerdict(bertahan.hasil.verdict)
+    : null;
 
   return (
-    <div className="min-h-screen bg-black px-4 py-6 text-zinc-100 sm:px-6">
-      <div className="mx-auto max-w-2xl">
-        <Link
-          to="/"
-          className="inline-flex min-h-[48px] items-center text-sm text-zinc-300 underline"
-        >
-          Kembali ke beranda
-        </Link>
+    <div className="w-full">
+      <Link
+        to="/"
+        className="inline-flex min-h-[48px] items-center text-sm text-zinc-300 underline"
+      >
+        Kembali ke beranda
+      </Link>
 
-        <h1
-          ref={judulRef}
-          tabIndex={-1}
-          className="mt-2 text-2xl font-bold tracking-tight outline-none"
-        >
-          Dokter WiFi
-        </h1>
-        <p className="mt-2 text-base leading-relaxed text-zinc-400">
-          Ukur kecepatan WiFi dan cari tahu penyebabnya bila lemot.
-        </p>
+      <h1
+        ref={judulRef}
+        tabIndex={-1}
+        className="mt-2 text-2xl font-bold tracking-tight outline-none"
+      >
+        Dokter WiFi
+      </h1>
+      <p className="mt-2 text-base leading-relaxed text-zinc-400">
+        Ukur kecepatan WiFi dan cari tahu penyebabnya bila lemot.
+      </p>
 
-        {/* Wilayah pengumuman untuk pembaca layar (a11y 3.5). */}
-        <div role="status" aria-live="polite" className="sr-only">
-          {pengumuman}
+      {/* Wilayah pengumuman untuk pembaca layar (a11y 3.5). */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {pengumuman}
+      </div>
+      {galat && (
+        <div role="alert" aria-live="assertive" className="sr-only">
+          {galat}
         </div>
-        {galat && (
-          <div role="alert" aria-live="assertive" className="sr-only">
-            {galat}
-          </div>
-        )}
+      )}
 
-        {/* Banner server tidak terjangkau. */}
-        {serverTerhubung === false && (
-          <div
-            role="alert"
-            className="mt-4 rounded-lg border border-yellow-400 bg-yellow-400/10 px-4 py-3"
-          >
-            <p className="text-sm font-medium text-yellow-400">
-              Tidak tersambung ke server — hasil tes tidak tersimpan
+      {/* Banner server tidak terjangkau. */}
+      {serverTerhubung === false && (
+        <div className="mt-4">
+          <Card status="peringatan" role="alert">
+            <p className="text-sm font-medium text-[var(--color-warning)]">
+              Tidak tersambung ke server. Hasil tes tidak tersimpan.
             </p>
             <p className="mt-1 text-sm text-zinc-300">
               Tes WiFi tetap bisa dijalankan, tetapi hasilnya tidak
               tersimpan sampai sambungan ke server pulih.
             </p>
-          </div>
-        )}
+          </Card>
+        </div>
+      )}
 
-        {/* Banner tamu (belum masuk). */}
-        {masuk === false && (
-          <div className="mt-4 rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3">
-            <p className="text-sm text-zinc-100">
+      {/* Banner tamu (belum masuk). */}
+      {masuk === false && (
+        <div className="mt-4">
+          <Card status="info">
+            <p className="text-sm font-medium text-zinc-100">
               Anda belum masuk. Hasil tes tidak tersimpan.
             </p>
             <p className="mt-1 text-sm text-zinc-400">
@@ -641,243 +729,317 @@ export default function WifiPage() {
             >
               Masuk untuk menyimpan
             </Link>
-          </div>
-        )}
+          </Card>
+        </div>
+      )}
 
+      {/* Tes kecepatan + hasil: berdampingan di desktop, bertumpuk di HP.
+          Tanpa hasil, kartu tes memakai lebar penuh. */}
+      <div
+        className={
+          hasil ? "mt-6 grid gap-6 lg:grid-cols-2" : "mt-6"
+        }
+      >
         {/* Tes kecepatan */}
-        <section
-          aria-labelledby="judul-tes"
-          className="mt-6 rounded-xl border border-zinc-800 bg-zinc-950 p-4"
-        >
-          <h2 id="judul-tes" className="text-lg font-semibold">
-            Tes kecepatan
-          </h2>
+        <section aria-labelledby="judul-tes">
+          <Card className="h-full">
+            <h2 id="judul-tes" className="text-lg font-semibold">
+              Tes kecepatan
+            </h2>
 
-          {/* Progres 4 tahap (a11y 6.7: status dalam teks). */}
-          <ol className="mt-4 space-y-2" aria-label="Tahap tes">
-            {TAHAP_TES.map((t, i) => {
-              const status =
-                tahap === "selesai"
-                  ? "Selesai"
-                  : i < indeksTahapAktif
+            {/* Progres 4 tahap (a11y 6.7: status dalam teks + cip). */}
+            <ol className="mt-4 space-y-2" aria-label="Tahap tes">
+              {TAHAP_TES.map((t, i) => {
+                const status =
+                  tahap === "selesai"
                     ? "Selesai"
-                    : i === indeksTahapAktif
-                      ? "Berjalan"
-                      : "Belum dimulai";
-              return (
-                <li
-                  key={t.id}
-                  aria-current={i === indeksTahapAktif ? "step" : undefined}
-                  className="flex items-center justify-between gap-4 rounded-lg border border-zinc-800 px-3 py-2"
-                >
-                  <span className="text-sm text-zinc-100">
-                    {i + 1}. {t.label}
-                  </span>
-                  <span className="shrink-0 text-sm text-zinc-400">
-                    {status}
-                  </span>
-                </li>
-              );
-            })}
-          </ol>
+                    : i < indeksTahapAktif
+                      ? "Selesai"
+                      : i === indeksTahapAktif
+                        ? "Berjalan"
+                        : "Belum dimulai";
+                return (
+                  <li
+                    key={t.id}
+                    aria-current={i === indeksTahapAktif ? "step" : undefined}
+                    className="flex items-center justify-between gap-4 rounded-lg border border-zinc-800 px-3 py-2"
+                  >
+                    <span className="text-sm text-zinc-100">
+                      {i + 1}. {t.label}
+                    </span>
+                    {status === "Selesai" ? (
+                      <StatusBadge status="sukses">Selesai</StatusBadge>
+                    ) : status === "Berjalan" ? (
+                      <StatusBadge status="info" dot>
+                        Berjalan
+                      </StatusBadge>
+                    ) : (
+                      <StatusBadge status="netral">
+                        Belum dimulai
+                      </StatusBadge>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
 
-          {/* Pemantau live — sengaja BUKAN aria-live (a11y 6.7). */}
-          {(tesBerjalan || hasil) && (
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-zinc-800 px-3 py-2">
+            {/* Pemantau live — sengaja BUKAN aria-live (a11y 6.7).
+                Angka live memakai skala display agar terbaca sekilas
+                selagi tes berjalan. */}
+            {(tesBerjalan || hasil) && (
+              <div className="mt-4 rounded-lg border border-zinc-800 px-4 py-3">
                 <p className="text-xs text-zinc-400">Kecepatan saat ini</p>
-                <p className="mt-1 font-mono text-base text-white">
-                  {liveKbps === null ? "—" : formatKecepatan(liveKbps)}
+                <p className="mt-1 flex flex-wrap items-baseline gap-x-2">
+                  {liveTampil === null ? (
+                    <span className="dh-numeric text-[length:var(--text-display-lg)] font-semibold leading-[var(--leading-display)] text-white">
+                      —
+                    </span>
+                  ) : (
+                    <>
+                      <span className="dh-numeric text-[length:var(--text-display-lg)] font-semibold leading-[var(--leading-display)] text-white">
+                        {liveTampil.angka}
+                      </span>
+                      <span className="text-base text-zinc-300">
+                        {liveTampil.satuan}
+                      </span>
+                    </>
+                  )}
+                </p>
+                <p className="mt-2 text-sm text-zinc-400">
+                  Latensi saat ini:{" "}
+                  <span className="dh-numeric text-base text-white">
+                    {liveLatensiMs === null
+                      ? "—"
+                      : formatLatensi(liveLatensiMs)}
+                  </span>
                 </p>
               </div>
-              <div className="rounded-lg border border-zinc-800 px-3 py-2">
-                <p className="text-xs text-zinc-400">Latensi saat ini</p>
-                <p className="mt-1 font-mono text-base text-white">
-                  {liveLatensiMs === null
-                    ? "—"
-                    : formatLatensi(liveLatensiMs)}
-                </p>
-              </div>
-            </div>
-          )}
-
-          <div className="mt-4 flex flex-col gap-3">
-            <button
-              type="button"
-              onClick={() => void jalankanTes()}
-              disabled={tesBerjalan || bertahan.berjalan}
-              className="min-h-[48px] w-full rounded-lg bg-white px-4 py-3 text-base font-semibold text-black hover:bg-zinc-200 focus-visible:outline-2 focus-visible:outline-white disabled:bg-zinc-800 disabled:text-zinc-400"
-            >
-              {tesBerjalan ? "Sedang memeriksa…" : "Periksa WiFi sekarang"}
-            </button>
-            {tesBerjalan && (
-              <button
-                type="button"
-                onClick={batalkanTes}
-                className="min-h-[48px] w-full rounded-lg border border-zinc-500 bg-transparent px-4 py-3 text-base font-medium text-zinc-100 hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-white"
-              >
-                Batalkan
-              </button>
             )}
-          </div>
 
-          {tahap === "galat" && galat && (
-            <div className="mt-4 rounded-lg border border-red-400 bg-red-400/10 px-4 py-3">
-              <p className="text-sm text-red-400">{galat}</p>
-              <button
-                type="button"
+            <div className="mt-4 flex flex-col gap-3">
+              <Button
+                variant="primary"
+                fullWidth
+                loading={tesBerjalan}
+                disabled={bertahan.berjalan}
                 onClick={() => void jalankanTes()}
-                className="mt-2 min-h-[48px] rounded-lg border border-zinc-500 px-4 py-2 text-sm font-medium text-white focus-visible:outline-2 focus-visible:outline-white"
               >
-                Coba lagi
-              </button>
+                {tesBerjalan ? "Sedang memeriksa…" : "Periksa WiFi sekarang"}
+              </Button>
+              {tesBerjalan && (
+                <Button
+                  variant="secondary"
+                  fullWidth
+                  onClick={batalkanTes}
+                >
+                  Batalkan
+                </Button>
+              )}
             </div>
-          )}
 
-          {!hasil && tahap === "idle" && (
-            <div className="mt-4 rounded-lg border border-zinc-800 px-4 py-4">
-              <p className="font-medium text-zinc-100">Belum ada tes WiFi</p>
-              <p className="mt-1 text-sm text-zinc-400">
-                Ketuk Periksa WiFi sekarang untuk mengukur kecepatan
-                koneksi yang sedang dipakai.
-              </p>
-            </div>
-          )}
+            {tahap === "galat" && galat && (
+              <PanelStatus status="galat" className="mt-4">
+                <p className="text-sm text-[var(--color-error)]">{galat}</p>
+                <Button
+                  variant="secondary"
+                  fullWidth
+                  className="mt-3"
+                  onClick={() => void jalankanTes()}
+                >
+                  Coba lagi
+                </Button>
+              </PanelStatus>
+            )}
+
+            {!hasil && tahap === "idle" && (
+              <div className="mt-4">
+                <EmptyState
+                  title="Belum ada tes WiFi"
+                  description="Ketuk Periksa WiFi sekarang untuk mengukur kecepatan koneksi yang sedang dipakai."
+                />
+              </div>
+            )}
+          </Card>
         </section>
 
         {/* Hasil tes */}
         {hasil && (
-          <section
-            aria-labelledby="judul-hasil"
-            className="mt-6 rounded-xl border border-zinc-800 bg-zinc-950 p-4"
-          >
-            <h2 id="judul-hasil" className="text-lg font-semibold">
-              Hasil tes WiFi
-            </h2>
-            <p className="mt-1 text-sm text-zinc-400">
-              Diukur {formatTanggal(hasil.diukurPada)}
-            </p>
+          <section aria-labelledby="judul-hasil">
+            <Card className="h-full">
+              <h2 id="judul-hasil" className="text-lg font-semibold">
+                Hasil tes WiFi
+              </h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                Diukur {formatTanggal(hasil.diukurPada)}
+              </p>
 
-            <dl className="mt-4 space-y-3">
-              <div className="flex items-baseline justify-between gap-4">
-                <dt className="text-sm text-zinc-400">Kecepatan unduh</dt>
-                <dd className="text-right font-mono text-lg font-semibold text-white">
-                  {formatKecepatan(hasil.kecepatanKbps)}
-                </dd>
+              {/* Angka hero: putih display (angka ukur, bukan status).
+                  Label klasifikasi diwarnai token status (K-96) agar
+                  verdict utama terbaca sekilas. */}
+              {hasilTampil && (
+                <div className="mt-4">
+                  <p className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="dh-numeric text-[length:var(--text-display-lg)] font-semibold leading-[var(--leading-display)] text-white lg:text-[length:var(--text-display-xl)]">
+                      {hasilTampil.angka}
+                    </span>
+                    <span className="text-lg text-zinc-300">
+                      {hasilTampil.satuan}
+                    </span>
+                  </p>
+                  <p
+                    className="mt-2 text-lg font-semibold"
+                    style={{
+                      color: tokenStatus(
+                        statusDariKlasifikasiKecepatan(
+                          hasil.klasifikasi.id,
+                        ),
+                      ).teks,
+                    }}
+                  >
+                    {hasil.klasifikasi.label}
+                  </p>
+                  <p className="mt-1 text-sm leading-relaxed text-zinc-300">
+                    {hasil.klasifikasi.penjelasan}
+                  </p>
+                </div>
+              )}
+
+              <dl className="mt-4 space-y-3">
+                <div className="flex items-baseline justify-between gap-4">
+                  <dt className="text-sm text-zinc-400">Alamat IP publik</dt>
+                  <dd className="dh-numeric min-w-0 break-words text-right text-base text-white">
+                    {hasil.ip ?? "tidak tersedia"}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-4">
+                  <dt className="text-sm text-zinc-400">Jenis koneksi</dt>
+                  <dd className="min-w-0 text-right text-base text-white">
+                    {hasil.jenisKoneksi ?? "tidak tersedia"}
+                  </dd>
+                </div>
+              </dl>
+
+              <div className="mt-4 flex flex-col gap-3">
+                <Button
+                  variant="secondary"
+                  fullWidth
+                  onClick={() => void bagikanHasil()}
+                >
+                  Bagikan hasil
+                </Button>
+                {pesanBerbagi && (
+                  <p role="status" className="text-sm text-zinc-300">
+                    {pesanBerbagi}
+                  </p>
+                )}
+                {masuk === true ? (
+                  <>
+                    <Button
+                      variant="primary"
+                      fullWidth
+                      loading={menyimpan}
+                      disabled={sudahDisimpan}
+                      onClick={() => void simpanLaporan()}
+                    >
+                      {menyimpan
+                        ? "Menyimpan…"
+                        : sudahDisimpan
+                          ? "Sudah tersimpan"
+                          : "Simpan laporan"}
+                    </Button>
+                    <p className="text-sm text-zinc-400">
+                      Hasil tersimpan otomatis ke riwayat.
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-sm text-zinc-400">
+                    Hasil tidak tersimpan karena Anda belum masuk. Masuk
+                    untuk menyimpan riwayat.
+                  </p>
+                )}
+                {pesanSimpan && (
+                  <p role="status" className="text-sm text-zinc-300">
+                    {pesanSimpan}
+                  </p>
+                )}
               </div>
-              <div className="rounded-lg border border-zinc-800 px-3 py-2">
-                <p className="font-medium text-white">
-                  {hasil.klasifikasi.label}
+            </Card>
+          </section>
+        )}
+      </div>
+
+      {/* Info jaringan: kartu status tersendiri (bukan kartu bersarang
+          di dalam kartu hasil). Status mengikuti verdict tes bertahan
+          bila sudah ada, lengkap dengan label teksnya. */}
+      {hasil && (
+        <section aria-labelledby="judul-jaringan" className="mt-6">
+          <Card status={statusJaringan} padding="lg">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 id="judul-jaringan" className="text-lg font-semibold">
+                Info jaringan
+              </h2>
+              {bertahan.hasil && statusVerdict && (
+                <p className="text-sm text-zinc-400">
+                  Tes bertahan:{" "}
+                  <span
+                    className="font-medium"
+                    style={{ color: tokenStatus(statusVerdict).teks }}
+                  >
+                    {labelVerdict(bertahan.hasil.verdict)}
+                  </span>
                 </p>
-                <p className="mt-1 text-sm leading-relaxed text-zinc-300">
-                  {hasil.klasifikasi.penjelasan}
-                </p>
-              </div>
-              <div className="flex items-baseline justify-between gap-4">
-                <dt className="text-sm text-zinc-400">Latensi HTTP</dt>
-                <dd className="font-mono text-base text-white">
-                  {hasil.latensiMs === null
-                    ? "tidak tersedia"
-                    : formatLatensi(hasil.latensiMs)}
-                </dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-4">
-                <dt className="text-sm text-zinc-400">Alamat IP publik</dt>
-                <dd className="font-mono text-base text-white">
-                  {hasil.ip ?? "tidak tersedia"}
-                </dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-4">
-                <dt className="text-sm text-zinc-400">Jenis koneksi</dt>
-                <dd className="text-base text-white">
-                  {hasil.jenisKoneksi ?? "tidak tersedia"}
-                </dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-4">
-                <dt className="text-sm text-zinc-400">Nama WiFi</dt>
-                <dd className="text-base text-white">
+              )}
+            </div>
+            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
+              <div className="min-w-0">
+                <dt className="text-xs text-zinc-400">Nama WiFi</dt>
+                <dd className="mt-1 min-w-0 break-words text-base text-white">
                   {manual.ssid.trim() === "" ? "tidak tersedia" : manual.ssid}
                 </dd>
               </div>
-              <div className="flex items-baseline justify-between gap-4">
-                <dt className="text-sm text-zinc-400">Kekuatan sinyal</dt>
-                <dd className="text-base text-white">
+              <div className="min-w-0">
+                <dt className="text-xs text-zinc-400">Kekuatan sinyal</dt>
+                <dd className="mt-1 min-w-0 break-words text-base text-white">
                   {dbmTerisi === null
                     ? "tidak tersedia"
                     : `${dbmTerisi} dBm (${labelSinyalDariDbm(dbmTerisi)})`}
                 </dd>
               </div>
-              <div className="flex items-baseline justify-between gap-4">
-                <dt className="text-sm text-zinc-400">Channel</dt>
-                <dd className="text-base text-white">
-                  {manual.channel.trim() === "" ? "tidak tersedia" : manual.channel}
+              <div className="min-w-0">
+                <dt className="text-xs text-zinc-400">Channel</dt>
+                <dd className="mt-1 text-base text-white">
+                  {manual.channel.trim() === ""
+                    ? "tidak tersedia"
+                    : manual.channel}
                 </dd>
               </div>
-              <div className="flex items-baseline justify-between gap-4">
-                <dt className="text-sm text-zinc-400">DNS</dt>
-                <dd className="font-mono text-base text-white">
+              <div className="min-w-0">
+                <dt className="text-xs text-zinc-400">DNS</dt>
+                <dd className="dh-numeric mt-1 min-w-0 break-words text-base text-white">
                   {manual.dns.trim() === "" ? "tidak tersedia" : manual.dns}
                 </dd>
               </div>
+              <div className="min-w-0">
+                <dt className="text-xs text-zinc-400">Latensi HTTP</dt>
+                <dd className="dh-numeric mt-1 text-base text-white">
+                  {hasil.latensiMs === null
+                    ? "tidak tersedia"
+                    : formatLatensi(hasil.latensiMs)}
+                </dd>
+              </div>
             </dl>
-
             <p className="mt-4 text-sm leading-relaxed text-zinc-400">
               Latensi HTTP adalah waktu yang dibutuhkan satu permintaan
               kecil bolak-balik ke server. Browser tidak bisa mengukur
               ping biasa, jadi yang ditampilkan adalah latensi HTTP.
             </p>
+          </Card>
+        </section>
+      )}
 
-            <div className="mt-4 flex flex-col gap-3">
-              <button
-                type="button"
-                onClick={() => void bagikanHasil()}
-                className="min-h-[48px] w-full rounded-lg border border-zinc-500 bg-transparent px-4 py-3 text-base font-medium text-white hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-white"
-              >
-                Bagikan hasil
-              </button>
-              {pesanBerbagi && (
-                <p role="status" className="text-sm text-zinc-300">
-                  {pesanBerbagi}
-                </p>
-              )}
-              {masuk === true ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void simpanLaporan()}
-                    disabled={menyimpan || sudahDisimpan}
-                    className="min-h-[48px] w-full rounded-lg bg-white px-4 py-3 text-base font-semibold text-black hover:bg-zinc-200 focus-visible:outline-2 focus-visible:outline-white disabled:bg-zinc-800 disabled:text-zinc-400"
-                  >
-                    {menyimpan
-                      ? "Menyimpan…"
-                      : sudahDisimpan
-                        ? "Sudah tersimpan"
-                        : "Simpan laporan"}
-                  </button>
-                  <p className="text-sm text-zinc-400">
-                    Hasil tersimpan otomatis ke riwayat.
-                  </p>
-                </>
-              ) : (
-                <p className="text-sm text-zinc-400">
-                  Hasil tidak tersimpan karena Anda belum masuk. Masuk
-                  untuk menyimpan riwayat.
-                </p>
-              )}
-              {pesanSimpan && (
-                <p role="status" className="text-sm text-zinc-300">
-                  {pesanSimpan}
-                </p>
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* Tes bertahan 30 detik */}
-        <section
-          aria-labelledby="judul-bertahan"
-          className="mt-6 rounded-xl border border-zinc-800 bg-zinc-950 p-4"
-        >
+      {/* Tes bertahan 30 detik */}
+      <section aria-labelledby="judul-bertahan" className="mt-6">
+        <Card>
           <h2 id="judul-bertahan" className="text-lg font-semibold">
             Tes bertahan 30 detik
           </h2>
@@ -888,10 +1050,33 @@ export default function WifiPage() {
           </p>
 
           {bertahan.berjalan && (
-            <p className="mt-4 font-mono text-base text-white" aria-live="off">
-              Mengukur… detik ke-{bertahan.detikKe} dari{" "}
-              {DURASI_TES_BERTAHAN_DETIK}
-            </p>
+            <div className="mt-4">
+              {/* Bilah kemajuan jujur: terisi seiring sampel tiba
+                  (satu per detik), bukan animasi perkiraan. Gerak
+                  lewat transform agar murah; durasi dari token. */}
+              <div
+                role="progressbar"
+                aria-valuenow={bertahan.detikKe}
+                aria-valuemin={0}
+                aria-valuemax={DURASI_TES_BERTAHAN_DETIK}
+                aria-label="Kemajuan tes bertahan"
+                className="h-2 overflow-hidden rounded-full bg-zinc-800"
+              >
+                <div
+                  className="h-full w-full origin-left rounded-full bg-white transition-transform duration-[var(--duration-medium)] ease-[var(--ease-out)]"
+                  style={{
+                    transform: `scaleX(${bertahan.detikKe / DURASI_TES_BERTAHAN_DETIK})`,
+                  }}
+                />
+              </div>
+              <p
+                className="dh-numeric mt-2 text-base text-white"
+                aria-live="off"
+              >
+                Mengukur… detik ke-{bertahan.detikKe} dari{" "}
+                {DURASI_TES_BERTAHAN_DETIK}
+              </p>
+            </div>
           )}
 
           {bertahan.sampel.length > 0 && (
@@ -908,46 +1093,84 @@ export default function WifiPage() {
             </div>
           )}
 
-          {bertahan.hasil && (
-            <p className="mt-4 rounded-lg border border-zinc-800 px-3 py-2 text-sm leading-relaxed text-zinc-100">
-              {teksVerdict(bertahan.hasil)}
-            </p>
+          {bertahan.hasil && statusVerdict && (
+            <PanelStatus
+              status={statusVerdict}
+              className="mt-4"
+              data-testid="panel-verdict"
+            >
+              {/* Verdict besar: warna dari helper status-warna +
+                  label teks (tidak pernah warna saja). Kalimat
+                  ringkasan di bawah tidak diubah (teksVerdict). */}
+              <p
+                className="text-xl font-semibold"
+                style={{ color: tokenStatus(statusVerdict).teks }}
+              >
+                {labelVerdict(bertahan.hasil.verdict)}
+              </p>
+              <p className="mt-1 text-sm leading-relaxed text-zinc-100">
+                {teksVerdict(bertahan.hasil)}
+              </p>
+              <dl className="mt-3 grid grid-cols-3 gap-3">
+                <div className="min-w-0">
+                  <dt className="text-xs text-zinc-400">Rata-rata</dt>
+                  <dd className="dh-numeric mt-1 text-sm text-white">
+                    {formatKecepatan(bertahan.hasil.rataRataKbps)}
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-xs text-zinc-400">Terendah</dt>
+                  <dd className="dh-numeric mt-1 text-sm text-white">
+                    {formatKecepatan(bertahan.hasil.terendahKbps)}
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-xs text-zinc-400">Tertinggi</dt>
+                  <dd className="dh-numeric mt-1 text-sm text-white">
+                    {formatKecepatan(bertahan.hasil.tertinggiKbps)}
+                  </dd>
+                </div>
+              </dl>
+            </PanelStatus>
           )}
 
           {bertahan.galat && (
-            <div className="mt-4 rounded-lg border border-red-400 bg-red-400/10 px-4 py-3">
-              <p className="text-sm text-red-400">{bertahan.galat}</p>
-            </div>
+            <PanelStatus status="galat" className="mt-4">
+              <p className="text-sm text-[var(--color-error)]">
+                {bertahan.galat}
+              </p>
+            </PanelStatus>
           )}
 
           <div className="mt-4 flex flex-col gap-3">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              fullWidth
+              loading={bertahan.berjalan}
+              disabled={tesBerjalan}
               onClick={() => void jalankanBertahan()}
-              disabled={tesBerjalan || bertahan.berjalan}
-              className="min-h-[48px] w-full rounded-lg border border-zinc-500 bg-transparent px-4 py-3 text-base font-medium text-white hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-white disabled:border-zinc-800 disabled:text-zinc-400"
             >
               {bertahan.berjalan
                 ? "Tes bertahan berjalan…"
                 : "Tes bertahan 30 detik"}
-            </button>
+            </Button>
             {bertahan.berjalan && (
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                fullWidth
                 onClick={batalkanTes}
-                className="min-h-[48px] w-full rounded-lg border border-zinc-500 bg-transparent px-4 py-3 text-base font-medium text-zinc-100 hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-white"
               >
                 Batalkan
-              </button>
+              </Button>
             )}
           </div>
-        </section>
+        </Card>
+      </section>
 
+      {/* Saran + panduan: berdampingan di desktop, bertumpuk di HP. */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
         {/* Rekomendasi */}
-        <section
-          aria-labelledby="judul-rekomendasi"
-          className="mt-6 rounded-xl border border-zinc-800 bg-zinc-950 p-4"
-        >
+        <section aria-labelledby="judul-rekomendasi">
           <h2 id="judul-rekomendasi" className="text-lg font-semibold">
             Saran perbaikan
           </h2>
@@ -960,50 +1183,51 @@ export default function WifiPage() {
         <section
           id="panduan-wifi-lemot"
           aria-labelledby="judul-panduan"
-          className="mt-6 scroll-mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-4"
+          className="scroll-mt-4"
         >
-          <h2 id="judul-panduan" className="text-lg font-semibold">
-            WiFi lemot: cara mencari penyebabnya
-          </h2>
-          <div className="mt-4 space-y-3 text-sm leading-relaxed text-zinc-300">
-            <p>
-              Sebagai patokan, kecepatan unduh yang wajar biasanya
-              sekitar 1 MB/detik atau lebih. Bila hasil tes jauh di
-              bawah itu, ada yang perlu diperiksa.
-            </p>
-            <p>
-              Penyebab yang sering terjadi adalah pengaturan router
-              yang masih memakai mode lama. Mode lama membatasi
-              kecepatan seluruh jaringan WiFi, walau sinyal terlihat
-              penuh.
-            </p>
-            <p>
-              Coba HP lain di WiFi yang sama. Bila HP lain juga lemot,
-              masalahnya ada di router atau jaringan, bukan di HP.
-            </p>
-            <p>
-              Coba data seluler. Bila data seluler lancar, masalahnya
-              ada di WiFi, bukan di HP.
-            </p>
-          </div>
+          <Card className="h-full">
+            <h2 id="judul-panduan" className="text-lg font-semibold">
+              WiFi lemot: cara mencari penyebabnya
+            </h2>
+            <div className="mt-4 space-y-3 text-sm leading-relaxed text-zinc-300">
+              <p>
+                Sebagai patokan, kecepatan unduh yang wajar biasanya
+                sekitar 1 MB/detik atau lebih. Bila hasil tes jauh di
+                bawah itu, ada yang perlu diperiksa.
+              </p>
+              <p>
+                Penyebab yang sering terjadi adalah pengaturan router
+                yang masih memakai mode lama. Mode lama membatasi
+                kecepatan seluruh jaringan WiFi, walau sinyal terlihat
+                penuh.
+              </p>
+              <p>
+                Coba HP lain di WiFi yang sama. Bila HP lain juga lemot,
+                masalahnya ada di router atau jaringan, bukan di HP.
+              </p>
+              <p>
+                Coba data seluler. Bila data seluler lancar, masalahnya
+                ada di WiFi, bukan di HP.
+              </p>
+            </div>
+          </Card>
         </section>
+      </div>
 
-        {/* Input manual */}
-        <section
-          aria-labelledby="judul-manual"
-          className="mt-6 rounded-xl border border-zinc-800 bg-zinc-950 p-4"
-        >
+      {/* Input manual */}
+      <section aria-labelledby="judul-manual" className="mt-6">
+        <Card>
           <h2 id="judul-manual" className="text-lg font-semibold">
             Lengkapi info jaringan
           </h2>
-          <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+          <p className="mt-2 max-w-prose text-sm leading-relaxed text-zinc-400">
             Browser tidak bisa membaca nama WiFi, kekuatan sinyal, dan
-            channel secara langsung. Bila Anda mengetahuinya —
-            misalnya dari halaman pengaturan router — isi di sini agar
-            hasilnya lebih lengkap. Boleh dikosongkan.
+            channel secara langsung. Bila Anda mengetahuinya, misalnya
+            dari halaman pengaturan router, isi di sini agar hasilnya
+            lebih lengkap. Boleh dikosongkan.
           </p>
 
-          <div className="mt-4 space-y-4">
+          <div className="mt-4 max-w-xl space-y-4">
             <div>
               <label
                 htmlFor="manual-ssid"
@@ -1099,63 +1323,80 @@ export default function WifiPage() {
           </div>
 
           {galatManual && (
-            <p id="galat-manual" role="alert" className="mt-3 text-sm text-red-400">
+            <p
+              id="galat-manual"
+              role="alert"
+              className="mt-3 text-sm text-[var(--color-error)]"
+            >
               {galatManual}
             </p>
           )}
           {pesanManual && (
-            <p role="status" className="mt-3 text-sm text-zinc-300">
+            <p
+              role="status"
+              className="mt-3 text-sm text-[var(--color-success)]"
+            >
               {pesanManual}
             </p>
           )}
 
-          <button
-            type="button"
-            onClick={simpanInfoManual}
-            className="mt-4 min-h-[48px] w-full rounded-lg bg-white px-4 py-3 text-base font-semibold text-black hover:bg-zinc-200 focus-visible:outline-2 focus-visible:outline-white"
-          >
-            Simpan info jaringan
-          </button>
-        </section>
+          <div className="mt-4 max-w-xl">
+            <Button
+              variant="primary"
+              fullWidth
+              onClick={simpanInfoManual}
+            >
+              Simpan info jaringan
+            </Button>
+          </div>
+        </Card>
+      </section>
 
-        {/* Riwayat laporan (hanya bila masuk) */}
-        {masuk === true && (
-          <section
-            aria-labelledby="judul-riwayat"
-            className="mt-6 rounded-xl border border-zinc-800 bg-zinc-950 p-4"
-          >
+      {/* Riwayat laporan (hanya bila masuk) */}
+      {masuk === true && (
+        <section aria-labelledby="judul-riwayat" className="mt-6">
+          <Card>
             <h2 id="judul-riwayat" className="text-lg font-semibold">
               Riwayat tes WiFi
             </h2>
             {riwayatMemuat && (
-              <p role="status" className="mt-4 text-sm text-zinc-400">
-                Mengambil data…
-              </p>
+              <div className="mt-4">
+                <p className="text-sm text-zinc-400">Mengambil data…</p>
+                <SkeletonText
+                  lines={3}
+                  className="mt-3"
+                  label="Mengambil data…"
+                />
+              </div>
             )}
             {riwayatGalat && (
-              <div className="mt-4 rounded-lg border border-red-400 bg-red-400/10 px-4 py-3">
-                <p className="text-sm text-red-400">{riwayatGalat}</p>
-                <button
-                  type="button"
+              <PanelStatus status="galat" className="mt-4">
+                <p className="text-sm text-[var(--color-error)]">
+                  {riwayatGalat}
+                </p>
+                <Button
+                  variant="secondary"
+                  fullWidth
+                  className="mt-3"
                   onClick={() => void muatRiwayat()}
-                  className="mt-2 min-h-[48px] rounded-lg border border-zinc-500 px-4 py-2 text-sm font-medium text-white focus-visible:outline-2 focus-visible:outline-white"
                 >
                   Coba lagi
-                </button>
-              </div>
+                </Button>
+              </PanelStatus>
             )}
-            {!riwayatMemuat && !riwayatGalat && riwayat !== null && riwayat.length === 0 && (
-              <div className="mt-4 rounded-lg border border-zinc-800 px-4 py-4">
-                <p className="font-medium text-zinc-100">
-                  Belum ada riwayat tes
-                </p>
-                <p className="mt-1 text-sm text-zinc-400">
-                  Hasil tes yang sudah dijalankan akan tampil di sini.
-                </p>
-              </div>
-            )}
+            {!riwayatMemuat &&
+              !riwayatGalat &&
+              riwayat !== null &&
+              riwayat.length === 0 && (
+                <div className="mt-4">
+                  <EmptyState
+                    title="Belum ada riwayat tes"
+                    description="Hasil tes yang sudah dijalankan akan tampil di sini."
+                  />
+                </div>
+              )}
             {!riwayatMemuat && riwayat !== null && riwayat.length > 0 && (
-              <ul className="mt-4 space-y-3">
+              <ul className="mt-4 grid gap-3 lg:grid-cols-2">
                 {riwayat.map((laporan) => {
                   const klasifikasi =
                     laporan.kecepatan_unduh_kbps === null
@@ -1164,14 +1405,14 @@ export default function WifiPage() {
                   return (
                     <li
                       key={laporan.id}
-                      className="rounded-lg border border-zinc-800 px-3 py-3"
+                      className="min-w-0 rounded-lg border border-zinc-800 px-3 py-3"
                     >
                       <p className="text-sm font-medium text-zinc-100">
                         {laporan.kecepatan_unduh_kbps === null
                           ? "Tes WiFi"
-                          : `Tes WiFi — ${formatKecepatan(laporan.kecepatan_unduh_kbps)}${klasifikasi ? ` (${klasifikasi.label})` : ""}`}
+                          : `Tes WiFi, ${formatKecepatan(laporan.kecepatan_unduh_kbps)}${klasifikasi ? ` (${klasifikasi.label})` : ""}`}
                         {laporan.durasi_tes_detik === 30
-                          ? " — Tes bertahan 30 detik"
+                          ? ", tes bertahan 30 detik"
                           : ""}
                       </p>
                       <p className="mt-1 text-sm text-zinc-400">
@@ -1180,7 +1421,7 @@ export default function WifiPage() {
                           : `Latensi HTTP ${formatLatensi(laporan.ping_ms)}`}
                       </p>
                       <p className="mt-1 text-xs text-zinc-400">
-                        {labelSumber(laporan.sumber)} —{" "}
+                        {labelSumber(laporan.sumber)}, {" "}
                         {formatTanggal(laporan.dibuat_pada)}
                       </p>
                     </li>
@@ -1188,15 +1429,15 @@ export default function WifiPage() {
                 })}
               </ul>
             )}
-          </section>
-        )}
+          </Card>
+        </section>
+      )}
 
-        <p className="mt-6 pb-4 text-center text-xs text-zinc-400">
-          Dokter HP tidak menjanjikan HP jadi lebih cepat. Aplikasi ini
-          membantu menemukan masalah dan menunjukkan langkah
-          perbaikannya.
-        </p>
-      </div>
+      <p className="mt-6 pb-4 text-center text-xs text-zinc-400">
+        Dokter HP tidak menjanjikan HP jadi lebih cepat. Aplikasi ini
+        membantu menemukan masalah dan menunjukkan langkah
+        perbaikannya.
+      </p>
     </div>
   );
 }

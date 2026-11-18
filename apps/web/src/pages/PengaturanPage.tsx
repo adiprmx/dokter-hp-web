@@ -9,7 +9,12 @@ import {
   validasiNama,
 } from "../lib/akun";
 import { ApiError, basisApi, panggilApi } from "../lib/api";
+import { tokenStatus } from "../lib/status-warna";
 import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { Skeleton } from "../components/ui/Skeleton";
+import { StatusBadge } from "../components/ui/StatusBadge";
 import { simpanBahasa, type KodeBahasa } from "../i18n";
 import { useAppStore } from "../store/useAppStore";
 
@@ -27,6 +32,15 @@ import { useAppStore } from "../store/useAppStore";
 // "DELETE" untuk Inggris) dan dibaca lewat useTranslation — server
 // menerima keduanya (K-26). Pemilih bahasa ada di bagian Bahasa
 // halaman ini.
+//
+// Redesign v2.0 (docs/redesign-v20-spec.md §8.9, mode Operate):
+// bagian dikelompokkan (Akun, Keamanan, lalu Ekspor, Hapus akun,
+// Tentang, Keluar), warna hanya sebagai informasi status lewat
+// helper status-warna (bukan peta lokal), tombol nonaktif memakai
+// gaya eksplisit komponen Button (K-53, tanpa opacity), dan semua
+// keadaan ditangani (kerangka muat, kosong jujur, galat + coba lagi,
+// konfirmasi hapus akun yang tenang). Logika, rute, dan endpoint
+// TIDAK berubah.
 
 interface Profil {
   id: string;
@@ -62,17 +76,26 @@ function pesanDariGalat(err: unknown): string {
 
 type Pesan = { jenis: "sukses" | "galat"; teks: string } | null;
 
+// Panel pesan hasil aksi: tinta latar + bingkai + teks dari token
+// status lewat helper status-warna (jenis "sukses"/"galat" adalah
+// keadaan status kanonis, bukan peta lokal). Galat memakai
+// role="alert" agar pembaca layar langsung mengumumkannya; sukses
+// memakai role="status".
 function PesanStatus({ pesan }: { pesan: Pesan }) {
   if (!pesan) {
     return null;
   }
+  const token = tokenStatus(pesan.jenis);
   return (
     <p
-      role="status"
+      role={pesan.jenis === "sukses" ? "status" : "alert"}
       aria-live="polite"
-      className={
-        pesan.jenis === "sukses" ? "text-sm text-emerald-400" : "text-sm text-red-400"
-      }
+      className="mt-4 rounded-xl border px-4 py-3 text-sm leading-relaxed"
+      style={{
+        backgroundColor: token.latar,
+        borderColor: token.bingkai,
+        color: token.teks,
+      }}
     >
       {pesan.teks}
     </p>
@@ -371,229 +394,328 @@ export default function PengaturanPage() {
   const konfirmasiCocok = konfirmasiHapusValid(inputHapus, kataKonfirmasi);
 
   return (
-    <div className="min-h-screen bg-black px-4 py-6 text-zinc-100">
-      <div className="mx-auto w-full max-w-2xl">
-        <Link
-          to="/dashboard"
-          className="inline-flex min-h-[48px] items-center text-sm text-zinc-300 underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-        >
-          Kembali ke dashboard
-        </Link>
-        <h1 className="mt-2 text-2xl font-bold tracking-tight">Pengaturan akun</h1>
-        <p className="mt-2 text-sm text-zinc-400">
-          Kelola profil, PIN, sesi, dan akun Anda.
-        </p>
+    <div className="mx-auto w-full max-w-4xl px-4 pb-16 pt-6">
+      <Link
+        to="/dashboard"
+        className="inline-flex min-h-[48px] items-center text-sm text-zinc-300 underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+      >
+        Kembali ke dashboard
+      </Link>
+      <h1 className="mt-2 text-2xl font-bold tracking-tight text-[var(--color-text-primary)]">
+        Pengaturan akun
+      </h1>
+      <p className="mt-2 text-base leading-relaxed text-[var(--color-text-muted)]">
+        Kelola profil, PIN, sesi, dan akun Anda.
+      </p>
 
-        {status === "memuat" && (
-          <p role="status" className="mt-8 text-sm text-zinc-400">
+      {status === "memuat" && (
+        <div className="mt-8 space-y-4">
+          <p role="status" className="text-sm text-[var(--color-text-muted)]">
             Mengambil data…
           </p>
-        )}
+          <Skeleton height={220} rounded="lg" label="Memuat pengaturan" />
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Skeleton height={180} rounded="lg" label="Memuat pengaturan" />
+            <Skeleton height={180} rounded="lg" label="Memuat pengaturan" />
+          </div>
+          <Skeleton height={260} rounded="lg" label="Memuat pengaturan" />
+        </div>
+      )}
 
-        {status === "galat" && (
-          <div className="mt-8 rounded-2xl border border-zinc-800 bg-[#121215] p-4 sm:p-6">
-            <p role="alert" className="text-sm text-red-400">
+      {status === "galat" && (
+        <div className="mt-8">
+          <Card status="galat" padding="lg">
+            <p role="alert" className="text-sm text-[var(--color-error)]">
               Data tidak bisa dimuat. Coba lagi.
             </p>
             <Button onClick={() => void muat()} className="mt-4">
               Coba lagi
             </Button>
-          </div>
-        )}
+          </Card>
+        </div>
+      )}
 
-        {status === "siap" && profil && (
-          <div className="mt-6 space-y-4">
-            {/* Profil */}
-            <section
-              aria-labelledby="judul-profil"
-              className="rounded-2xl border border-zinc-800 bg-[#121215] p-4 sm:p-6"
+      {status === "siap" && profil && (
+        <div className="mt-8 space-y-10">
+          {/* Kelompok Akun: profil, bahasa, PIN */}
+          <section aria-labelledby="kelompok-akun">
+            <h2
+              id="kelompok-akun"
+              className="text-lg font-bold tracking-tight text-[var(--color-text-primary)]"
             >
-              <h2 id="judul-profil" className="text-lg font-semibold">
-                Profil
-              </h2>
-              <div className="mt-4 space-y-4">
-                <div>
-                  <label
-                    htmlFor="nama-tampilan"
-                    className="block text-sm font-medium text-zinc-300"
+              Akun
+            </h2>
+            <div className="mt-4 space-y-4">
+              <section aria-labelledby="judul-profil">
+                <Card padding="lg">
+                  <h3
+                    id="judul-profil"
+                    className="text-base font-semibold text-[var(--color-text-primary)]"
                   >
-                    Nama tampilan
-                  </label>
-                  <input
-                    id="nama-tampilan"
-                    type="text"
-                    value={namaInput}
-                    maxLength={100}
-                    autoComplete="name"
-                    onChange={(e) => setNamaInput(e.target.value)}
-                    className="mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-3 text-zinc-100 placeholder:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-                  />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-zinc-300">Email</p>
-                  <p className="mt-2 break-all text-sm text-zinc-100">{profil.email}</p>
-                  <p className="mt-1 text-sm text-zinc-400">
-                    Email berasal dari akun Google dan tidak bisa diubah di
-                    sini.
-                  </p>
-                </div>
-                <PesanStatus pesan={pesanProfil} />
-                <Button
-                  onClick={() => void simpanNama()}
-                  loading={menyimpanNama}
-                  disabled={namaInput.trim() === profil.nama}
-                >
-                  Simpan nama
-                </Button>
-              </div>
-            </section>
-
-            {/* Bahasa */}
-            <section
-              aria-labelledby="judul-bahasa"
-              className="rounded-2xl border border-zinc-800 bg-[#121215] p-4 sm:p-6"
-            >
-              <h2 id="judul-bahasa" className="text-lg font-semibold">
-                {t("settings.languageTitle")}
-              </h2>
-              <p className="mt-2 text-sm text-zinc-400">
-                {t("settings.languageDesc")}
-              </p>
-              <div
-                role="group"
-                aria-label={t("settings.languageTitle")}
-                className="mt-4 flex gap-2"
-              >
-                <button
-                  type="button"
-                  aria-pressed={bahasaAktif === "id"}
-                  onClick={() => gantiBahasa("id")}
-                  className={`inline-flex min-h-[48px] items-center rounded-lg px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
-                    bahasaAktif === "id"
-                      ? "bg-white text-black"
-                      : "border border-zinc-500 text-zinc-100"
-                  }`}
-                >
-                  Indonesia
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={bahasaAktif === "en"}
-                  onClick={() => gantiBahasa("en")}
-                  className={`inline-flex min-h-[48px] items-center rounded-lg px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
-                    bahasaAktif === "en"
-                      ? "bg-white text-black"
-                      : "border border-zinc-500 text-zinc-100"
-                  }`}
-                >
-                  English
-                </button>
-              </div>
-            </section>
-
-            {/* PIN aplikasi */}
-            <section
-              aria-labelledby="judul-pin"
-              className="rounded-2xl border border-zinc-800 bg-[#121215] p-4 sm:p-6"
-            >
-              <h2 id="judul-pin" className="text-lg font-semibold">
-                PIN aplikasi
-              </h2>
-              <p className="mt-2 text-sm text-zinc-400">
-                PIN melindungi riwayat pemeriksaan di aplikasi ini. PIN
-                diminta setiap kali sesi baru dimulai.
-              </p>
-              <p className="mt-4 flex min-h-[48px] items-center text-sm text-zinc-100">
-                {pinDiatur
-                  ? "PIN sudah diatur."
-                  : "PIN belum diatur. Aplikasi langsung terbuka tanpa PIN."}
-              </p>
-              <Link
-                to="/pengaturan/pin"
-                className="inline-flex min-h-[48px] items-center rounded-lg border border-zinc-500 px-4 text-sm font-medium text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-              >
-                {pinDiatur ? "Ubah PIN" : "Atur PIN"}
-              </Link>
-            </section>
-
-            {/* Sesi aktif */}
-            <section
-              aria-labelledby="judul-sesi"
-              className="rounded-2xl border border-zinc-800 bg-[#121215] p-4 sm:p-6"
-            >
-              <h2 id="judul-sesi" className="text-lg font-semibold">
-                Sesi aktif
-              </h2>
-              <p className="mt-2 text-sm text-zinc-400">
-                Perangkat yang sedang masuk dengan akun Anda. Bila ada sesi
-                yang tidak dikenal, keluar dari sesi itu dan periksa keamanan
-                akun Google Anda.
-              </p>
-              {daftarSesi.length === 0 ? (
-                <p className="mt-4 text-sm text-zinc-400">Tidak ada sesi aktif.</p>
-              ) : (
-                <ul className="mt-4 space-y-3">
-                  {daftarSesi.map((sesi) => (
-                    <li
-                      key={sesi.id}
-                      className="rounded-xl border border-zinc-800 bg-zinc-900 p-3"
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium text-zinc-100">
-                          {labelPerangkat(sesi.user_agent)}
-                        </p>
-                        {sesi.saat_ini && (
-                          <span className="rounded-full border border-zinc-500 px-2 py-0.5 text-xs text-zinc-300">
-                            Sesi ini
-                          </span>
-                        )}
-                      </div>
+                    Profil
+                  </h3>
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <label
+                        htmlFor="nama-tampilan"
+                        className="block text-sm font-medium text-zinc-300"
+                      >
+                        Nama tampilan
+                      </label>
+                      <input
+                        id="nama-tampilan"
+                        type="text"
+                        value={namaInput}
+                        maxLength={100}
+                        autoComplete="name"
+                        onChange={(e) => setNamaInput(e.target.value)}
+                        className="mt-2 min-h-[48px] w-full rounded-lg border border-zinc-500 bg-zinc-900 px-3 text-zinc-100 placeholder:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                      />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-zinc-300">Email</p>
+                      <p className="mt-2 break-all text-sm text-zinc-100">
+                        {profil.email}
+                      </p>
                       <p className="mt-1 text-sm text-zinc-400">
-                        Masuk sejak {formatTanggalWaktu(sesi.dibuat_pada)}
+                        Email berasal dari akun Google dan tidak bisa diubah di
+                        sini.
                       </p>
-                      <p className="text-sm text-zinc-400">
-                        Berlaku sampai {formatTanggalWaktu(sesi.kedaluwarsa_pada)}
-                      </p>
-                      {!sesi.saat_ini && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => void keluarDariSesi(sesi.id)}
-                          loading={menghapusSesiId === sesi.id}
-                          className="mt-3"
-                        >
-                          Keluar dari sesi ini
-                        </Button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <PesanStatus pesan={pesanSesi} />
-              {sesiLain.length > 0 && (
-                <Button
-                  variant="secondary"
-                  onClick={() => void keluarDariSemuaPerangkatLain()}
-                  loading={mengeluarkanSemua}
-                  className="mt-4"
-                >
-                  Keluar dari semua perangkat lain
-                </Button>
-              )}
-            </section>
+                    </div>
+                    <PesanStatus pesan={pesanProfil} />
+                    <Button
+                      onClick={() => void simpanNama()}
+                      loading={menyimpanNama}
+                      disabled={namaInput.trim() === profil.nama}
+                      className="mt-4"
+                    >
+                      Simpan nama
+                    </Button>
+                  </div>
+                </Card>
+              </section>
 
-            {/* Ekspor data */}
-            <section
-              aria-labelledby="judul-ekspor"
-              className="rounded-2xl border border-zinc-800 bg-[#121215] p-4 sm:p-6"
+              <div className="grid gap-4 lg:grid-cols-2">
+                {/* Bahasa */}
+                <section aria-labelledby="judul-bahasa">
+                  <Card padding="lg" className="h-full">
+                    <h3
+                      id="judul-bahasa"
+                      className="text-base font-semibold text-[var(--color-text-primary)]"
+                    >
+                      {t("settings.languageTitle")}
+                    </h3>
+                    <p className="mt-2 text-sm text-zinc-400">
+                      {t("settings.languageDesc")}
+                    </p>
+                    <div
+                      role="group"
+                      aria-label={t("settings.languageTitle")}
+                      className="mt-4 flex flex-wrap gap-2"
+                    >
+                      <button
+                        type="button"
+                        aria-pressed={bahasaAktif === "id"}
+                        onClick={() => gantiBahasa("id")}
+                        className={`inline-flex min-h-[48px] items-center rounded-lg px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                          bahasaAktif === "id"
+                            ? "bg-white text-black"
+                            : "border border-[var(--color-border-strong)] text-zinc-100"
+                        }`}
+                      >
+                        Indonesia
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={bahasaAktif === "en"}
+                        onClick={() => gantiBahasa("en")}
+                        className={`inline-flex min-h-[48px] items-center rounded-lg px-4 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                          bahasaAktif === "en"
+                            ? "bg-white text-black"
+                            : "border border-[var(--color-border-strong)] text-zinc-100"
+                        }`}
+                      >
+                        English
+                      </button>
+                    </div>
+                  </Card>
+                </section>
+
+                {/* PIN aplikasi */}
+                <section aria-labelledby="judul-pin">
+                  <Card padding="lg" className="h-full">
+                    <h3
+                      id="judul-pin"
+                      className="text-base font-semibold text-[var(--color-text-primary)]"
+                    >
+                      PIN aplikasi
+                    </h3>
+                    <p className="mt-2 text-sm text-zinc-400">
+                      PIN melindungi riwayat pemeriksaan di aplikasi ini. PIN
+                      diminta setiap kali sesi baru dimulai.
+                    </p>
+                    <p className="mt-4 flex min-h-[48px] flex-wrap items-center gap-2 text-sm text-zinc-100">
+                      <StatusBadge status={pinDiatur ? "sukses" : "peringatan"}>
+                        {pinDiatur ? "PIN aktif" : "Belum diatur"}
+                      </StatusBadge>
+                      {!pinDiatur && "Aplikasi langsung terbuka tanpa PIN."}
+                    </p>
+                    <Link
+                      to="/pengaturan/pin"
+                      className="mt-4 inline-flex min-h-[48px] items-center rounded-lg border border-[var(--color-border-strong)] px-4 text-sm font-medium text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                    >
+                      {pinDiatur ? "Ubah PIN" : "Atur PIN"}
+                    </Link>
+                  </Card>
+                </section>
+              </div>
+            </div>
+          </section>
+
+          {/* Kelompok Keamanan: sesi aktif, pengingat skor turun */}
+          <section aria-labelledby="kelompok-keamanan">
+            <h2
+              id="kelompok-keamanan"
+              className="text-lg font-bold tracking-tight text-[var(--color-text-primary)]"
             >
-              <h2 id="judul-ekspor" className="text-lg font-semibold">
+              Keamanan
+            </h2>
+            <div className="mt-4 space-y-4">
+              <section aria-labelledby="judul-sesi">
+                <Card padding="lg">
+                  <h3
+                    id="judul-sesi"
+                    className="text-base font-semibold text-[var(--color-text-primary)]"
+                  >
+                    Sesi aktif
+                  </h3>
+                  <p className="mt-2 text-sm text-zinc-400">
+                    Perangkat yang sedang masuk dengan akun Anda. Bila ada sesi
+                    yang tidak dikenal, keluar dari sesi itu dan periksa
+                    keamanan akun Google Anda.
+                  </p>
+                  {daftarSesi.length === 0 ? (
+                    <div className="mt-4">
+                      <EmptyState
+                        title="Tidak ada sesi aktif"
+                        description="Daftar sesi kosong. Muat ulang untuk memeriksa lagi."
+                        action={
+                          <Button
+                            variant="secondary"
+                            onClick={() => void muat()}
+                          >
+                            Muat ulang
+                          </Button>
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <ul className="mt-4 space-y-3">
+                      {daftarSesi.map((sesi) => (
+                        <li
+                          key={sesi.id}
+                          className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-4"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium text-zinc-100">
+                              {labelPerangkat(sesi.user_agent)}
+                            </p>
+                            {sesi.saat_ini && (
+                              <StatusBadge status="sukses" dot>
+                                Sesi ini
+                              </StatusBadge>
+                            )}
+                          </div>
+                          <p className="mt-2 text-sm text-zinc-400">
+                            Masuk sejak {formatTanggalWaktu(sesi.dibuat_pada)}
+                          </p>
+                          <p className="text-sm text-zinc-400">
+                            Berlaku sampai{" "}
+                            {formatTanggalWaktu(sesi.kedaluwarsa_pada)}
+                          </p>
+                          <p className="text-sm text-zinc-400">
+                            IP terakhir:{" "}
+                            <span className="dh-numeric text-zinc-100">
+                              {sesi.ip_terakhir ?? "tidak tersedia"}
+                            </span>
+                          </p>
+                          {!sesi.saat_ini && (
+                            <Button
+                              variant="secondary"
+                              onClick={() => void keluarDariSesi(sesi.id)}
+                              loading={menghapusSesiId === sesi.id}
+                              className="mt-3"
+                            >
+                              Keluar dari sesi ini
+                            </Button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <PesanStatus pesan={pesanSesi} />
+                  {sesiLain.length > 0 && (
+                    <Button
+                      variant="secondary"
+                      onClick={() => void keluarDariSemuaPerangkatLain()}
+                      loading={mengeluarkanSemua}
+                      className="mt-4"
+                    >
+                      Keluar dari semua perangkat lain
+                    </Button>
+                  )}
+                </Card>
+              </section>
+
+              {/* Pengingat skor turun */}
+              <section aria-labelledby="judul-pengingat">
+                <Card padding="lg">
+                  <h3
+                    id="judul-pengingat"
+                    className="text-base font-semibold text-[var(--color-text-primary)]"
+                  >
+                    Pengingat skor turun
+                  </h3>
+                  <p className="mt-2 text-sm text-zinc-400">
+                    Aktifkan supaya aplikasi memberi tahu Anda bila skor
+                    kesehatan HP turun.
+                  </p>
+                  <p className="mt-4 flex min-h-[48px] flex-wrap items-center gap-2 text-sm text-zinc-100">
+                    <StatusBadge status="netral">Segera hadir</StatusBadge>
+                    Pengingat belum aktif.
+                  </p>
+                  <p className="text-sm text-zinc-400">
+                    {dukunganNotifikasi
+                      ? "Pengingat skor turun segera hadir di pembaruan berikutnya. Tombol di bawah belum bisa dipakai karena layanan pengingat masih disiapkan."
+                      : "Browser ini belum mendukung notifikasi. Coba buka dengan Chrome di HP Android."}
+                  </p>
+                  <Button
+                    variant="secondary"
+                    disabled
+                    title="Pengingat skor turun segera hadir"
+                    className="mt-4"
+                  >
+                    Aktifkan pengingat
+                  </Button>
+                </Card>
+              </section>
+            </div>
+          </section>
+
+          {/* Ekspor data */}
+          <section aria-labelledby="judul-ekspor">
+            <Card padding="lg">
+              <h2
+                id="judul-ekspor"
+                className="text-lg font-semibold text-[var(--color-text-primary)]"
+              >
                 Ekspor data
               </h2>
               <p className="mt-2 text-sm text-zinc-400">
-                Unduh seluruh data akun — profil, riwayat pemeriksaan,
-                laporan WiFi, dan tanya jawab — sebagai satu berkas JSON.
-                Ekspor dibatasi 5.000 baris per jenis data dan bisa diunduh
-                maksimal 5 kali sehari.
+                Unduh seluruh data akun sebagai satu berkas JSON: profil,
+                riwayat pemeriksaan, laporan WiFi, dan tanya jawab. Ekspor
+                dibatasi 5.000 baris per jenis data dan bisa diunduh maksimal
+                5 kali sehari.
               </p>
               <PesanStatus pesan={pesanEkspor} />
               <Button
@@ -604,56 +726,26 @@ export default function PengaturanPage() {
               >
                 Unduh data saya
               </Button>
-            </section>
+            </Card>
+          </section>
 
-            {/* Pengingat skor turun */}
-            <section
-              aria-labelledby="judul-pengingat"
-              className="rounded-2xl border border-zinc-800 bg-[#121215] p-4 sm:p-6"
-            >
-              <h2 id="judul-pengingat" className="text-lg font-semibold">
-                Pengingat skor turun
-              </h2>
-              <p className="mt-2 text-sm text-zinc-400">
-                Aktifkan supaya aplikasi memberi tahu Anda bila skor kesehatan
-                HP turun.
-              </p>
-              <p className="mt-4 flex min-h-[48px] items-center gap-2 text-sm text-zinc-100">
-                <span className="rounded-full border border-zinc-500 px-2 py-0.5 text-xs text-zinc-300">
-                  Segera hadir
-                </span>
-                Pengingat belum aktif.
-              </p>
-              <p className="text-sm text-zinc-400">
-                {dukunganNotifikasi
-                  ? "Pengingat skor turun segera hadir di pembaruan berikutnya. Tombol di bawah belum bisa dipakai karena layanan pengingat masih disiapkan."
-                  : "Browser ini belum mendukung notifikasi. Coba buka dengan Chrome di HP Android."}
-              </p>
-              <button
-                type="button"
-                disabled
-                aria-disabled="true"
-                title="Pengingat skor turun segera hadir"
-                className="mt-4 inline-flex min-h-[48px] cursor-not-allowed items-center rounded-lg border border-zinc-500 px-4 text-sm font-medium text-zinc-400 opacity-50"
+          {/* Hapus akun — zona bahaya. Kartu bertinta merah menandai
+              keadaan destruktif; teksnya faktual dan tenang, bukan
+              menakut-nakuti. */}
+          <section aria-labelledby="judul-hapus-akun">
+            <Card status="galat" padding="lg">
+              <h2
+                id="judul-hapus-akun"
+                className="text-lg font-semibold text-[var(--color-text-primary)]"
               >
-                Aktifkan pengingat
-              </button>
-            </section>
-
-            {/* Hapus akun */}
-            <section
-              aria-labelledby="judul-hapus-akun"
-              className="rounded-2xl border border-red-900 bg-[#121215] p-4 sm:p-6"
-            >
-              <h2 id="judul-hapus-akun" className="text-lg font-semibold">
                 Hapus akun
               </h2>
-              <p className="mt-2 text-sm text-red-400">
-                Menghapus akun akan menghapus profil dan seluruh data Anda —
-                riwayat pemeriksaan, tes WiFi, dan tanya jawab — secara
-                permanen. Tindakan ini tidak bisa dibatalkan.
+              <p className="mt-2 text-sm leading-relaxed text-[var(--color-error)]">
+                Menghapus akun akan menghapus profil dan seluruh data Anda
+                secara permanen, termasuk riwayat pemeriksaan, tes WiFi, dan
+                tanya jawab. Tindakan ini tidak bisa dibatalkan.
               </p>
-              <p className="mt-2 text-sm text-zinc-400">
+              <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
                 Bila masih ingin menyimpan riwayat, unduh data Anda terlebih
                 dahulu dari bagian Ekspor data di atas.
               </p>
@@ -721,75 +813,81 @@ export default function PengaturanPage() {
                   </div>
                 </div>
               )}
-            </section>
+            </Card>
+          </section>
 
+          <div className="grid gap-4 lg:grid-cols-2">
             {/* Tentang */}
-            <section
-              aria-labelledby="judul-tentang"
-              className="rounded-2xl border border-zinc-800 bg-[#121215] p-4 sm:p-6"
-            >
-              <h2 id="judul-tentang" className="text-lg font-semibold">
-                Tentang
-              </h2>
-              <p className="mt-2 text-sm text-zinc-400">
-                Versi aplikasi web:{" "}
-                <span className="text-zinc-100">{VERSI_APLIKASI_WEB}</span>
-              </p>
-              <nav aria-label="Tentang aplikasi" className="mt-2">
-                <ul className="divide-y divide-zinc-800">
-                  <li>
-                    <Link
-                      to="/tentang"
-                      className="flex min-h-[48px] items-center text-sm text-zinc-100 underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-                    >
-                      Tentang Dokter HP
-                    </Link>
-                  </li>
-                  <li>
-                    <Link
-                      to="/privasi"
-                      className="flex min-h-[48px] items-center text-sm text-zinc-100 underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-                    >
-                      Kebijakan Privasi
-                    </Link>
-                  </li>
-                  <li>
-                    <Link
-                      to="/syarat"
-                      className="flex min-h-[48px] items-center text-sm text-zinc-100 underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-                    >
-                      Syarat Layanan
-                    </Link>
-                  </li>
-                </ul>
-              </nav>
+            <section aria-labelledby="judul-tentang">
+              <Card padding="lg" className="h-full">
+                <h2
+                  id="judul-tentang"
+                  className="text-lg font-semibold text-[var(--color-text-primary)]"
+                >
+                  Tentang
+                </h2>
+                <p className="mt-2 text-sm text-zinc-400">
+                  Versi aplikasi web:{" "}
+                  <span className="text-zinc-100">{VERSI_APLIKASI_WEB}</span>
+                </p>
+                <nav aria-label="Tentang aplikasi" className="mt-2">
+                  <ul className="divide-y divide-zinc-800">
+                    <li>
+                      <Link
+                        to="/tentang"
+                        className="flex min-h-[48px] items-center text-sm text-zinc-100 underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                      >
+                        Tentang Dokter HP
+                      </Link>
+                    </li>
+                    <li>
+                      <Link
+                        to="/privasi"
+                        className="flex min-h-[48px] items-center text-sm text-zinc-100 underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                      >
+                        Kebijakan Privasi
+                      </Link>
+                    </li>
+                    <li>
+                      <Link
+                        to="/syarat"
+                        className="flex min-h-[48px] items-center text-sm text-zinc-100 underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                      >
+                        Syarat Layanan
+                      </Link>
+                    </li>
+                  </ul>
+                </nav>
+              </Card>
             </section>
 
             {/* Keluar */}
-            <section
-              aria-labelledby="judul-keluar"
-              className="rounded-2xl border border-zinc-800 bg-[#121215] p-4 sm:p-6"
-            >
-              <h2 id="judul-keluar" className="text-lg font-semibold">
-                Keluar
-              </h2>
-              <p className="mt-2 text-sm text-zinc-400">
-                Keluar hanya mengakhiri sesi di perangkat ini. Riwayat yang
-                sudah tersimpan tetap aman dan akan terlihat lagi saat masuk
-                kembali.
-              </p>
-              <Button
-                variant="secondary"
-                onClick={() => void keluar()}
-                loading={mengeluarkan}
-                className="mt-4"
-              >
-                Keluar
-              </Button>
+            <section aria-labelledby="judul-keluar">
+              <Card padding="lg" className="h-full">
+                <h2
+                  id="judul-keluar"
+                  className="text-lg font-semibold text-[var(--color-text-primary)]"
+                >
+                  Keluar
+                </h2>
+                <p className="mt-2 text-sm text-zinc-400">
+                  Keluar hanya mengakhiri sesi di perangkat ini. Riwayat yang
+                  sudah tersimpan tetap aman dan akan terlihat lagi saat masuk
+                  kembali.
+                </p>
+                <Button
+                  variant="secondary"
+                  onClick={() => void keluar()}
+                  loading={mengeluarkan}
+                  className="mt-4"
+                >
+                  Keluar
+                </Button>
+              </Card>
             </section>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

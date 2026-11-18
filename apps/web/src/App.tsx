@@ -120,7 +120,7 @@ export default function App() {
       <EfekGantiRute />
       <Suspense
         fallback={
-          <div className="min-h-screen bg-black px-4 py-6">
+          <div className="min-h-dvh bg-black px-4 py-6">
             <div className="mx-auto w-full max-w-5xl">
               <SkeletonHalaman />
             </div>

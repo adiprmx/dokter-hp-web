@@ -10,6 +10,15 @@
 // tanggal + skor yang sama isinya. SVG memakai role="img" dengan aria-label
 // yang meringkas data. Label sumbu memakai Zinc 400 (lolos 4,5:1); garis
 // putih di atas kartu lolos 3:1 untuk komponen non-teks.
+//
+// Warna (redesign v2.0 §4/§9): zona latar menandai pita kategori skor
+// (80-100 hijau, 50-79 kuning, 0-49 merah — ambang kanonis 80/50 dari
+// lib/skor.ts via helper status-warna); tiap titik berwarna sesuai
+// kategorinya, dan tiap ruas garis berwarna sesuai titik tujuannya.
+// Warna selalu berpasangan dengan angka skor berteks di ringkasan dan
+// tabel, bukan hanya warna.
+
+import { statusDariSkor, tokenStatus } from "../../lib/status-warna";
 
 export interface TitikSkor {
   /** Tanggal pemeriksaan, ISO 8601 (kolom dibuat_pada dari API). */
@@ -85,9 +94,11 @@ export function ScoreHistoryChart({ data }: ScoreHistoryChartProps) {
     PAD_ATAS +
     tinggiGrafik -
     (Math.max(0, Math.min(100, skor)) / 100) * tinggiGrafik;
-  const points = titik
-    .map((t, i) => `${posisiX(i).toFixed(1)},${posisiY(t.skor).toFixed(1)}`)
-    .join(" ");
+
+  // Warna tiap titik dari kategorinya (helper status-warna, ambang 80/50).
+  const warnaTitik = titik.map(
+    (t) => tokenStatus(statusDariSkor(t.skor)).teks,
+  );
 
   const ringkasan = `Grafik skor ${titik.length} pemeriksaan terakhir, dari ${skorMin} sampai ${skorMaks}. Skor terakhir ${terakhir.skor} pada ${formatTanggal(terakhir.tanggal, formatTanggalPanjang)}.`;
 
@@ -99,15 +110,42 @@ export function ScoreHistoryChart({ data }: ScoreHistoryChartProps) {
         role="img"
         aria-label={ringkasan}
       >
-        {[0, 50, 100].map((nilai) => (
+        {/* Zona pita kategori skor: 80-100 baik, 50-79 cukup, 0-49 buruk. */}
+        <rect
+          x={PAD_KIRI}
+          y={posisiY(100)}
+          width={lebarGrafik}
+          height={posisiY(80) - posisiY(100)}
+          fill="var(--color-success-bg)"
+        />
+        <rect
+          x={PAD_KIRI}
+          y={posisiY(80)}
+          width={lebarGrafik}
+          height={posisiY(50) - posisiY(80)}
+          fill="var(--color-warning-bg)"
+        />
+        <rect
+          x={PAD_KIRI}
+          y={posisiY(50)}
+          width={lebarGrafik}
+          height={posisiY(0) - posisiY(50)}
+          fill="var(--color-error-bg)"
+        />
+        {[0, 50, 80, 100].map((nilai) => (
           <g key={nilai}>
             <line
               x1={PAD_KIRI}
               x2={LEBAR - PAD_KANAN}
               y1={posisiY(nilai)}
               y2={posisiY(nilai)}
-              stroke="var(--color-border)"
+              stroke={
+                nilai === 80
+                  ? "var(--color-border-strong)"
+                  : "var(--color-border)"
+              }
               strokeWidth="1"
+              strokeDasharray={nilai === 80 ? "4 3" : undefined}
             />
             <text
               x={PAD_KIRI - 6}
@@ -120,23 +158,30 @@ export function ScoreHistoryChart({ data }: ScoreHistoryChartProps) {
             </text>
           </g>
         ))}
-        {titik.length > 1 ? (
-          <polyline
-            points={points}
-            fill="none"
-            stroke="#ffffff"
-            strokeWidth="2"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-        ) : null}
+        {/* Ruas garis per segmen, berwarna sesuai titik tujuannya. */}
+        {titik.map((t, i) =>
+          i === 0 ? null : (
+            <line
+              key={`ruas-${i}`}
+              x1={posisiX(i - 1)}
+              y1={posisiY(titik[i - 1].skor)}
+              x2={posisiX(i)}
+              y2={posisiY(t.skor)}
+              stroke={warnaTitik[i]}
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+          ),
+        )}
         {titik.map((t, i) => (
           <circle
             key={`${t.tanggal}-${i}`}
             cx={posisiX(i)}
             cy={posisiY(t.skor)}
             r="3"
-            fill="#ffffff"
+            fill={warnaTitik[i]}
+            stroke="var(--color-bg)"
+            strokeWidth="1"
           />
         ))}
         <text

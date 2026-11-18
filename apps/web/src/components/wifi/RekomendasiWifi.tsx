@@ -2,6 +2,15 @@
 // Keenam teks berasal dari docs/copy.md 5 (bagian Rekomendasi);
 // urutan disesuaikan dengan hasil tes — yang paling sesuai
 // dengan hasil tampil paling atas, sisanya tetap tampil.
+//
+// Redesign v2.0 (docs/redesign-v20-spec.md §8.3/§9): saran yang
+// paling sesuai dengan hasil tes memakai Card status "info"
+// (biru = info penting) + cip StatusBadge berlabel teks, agar
+// saran yang relevan terbaca sekilas tanpa mengandalkan warna
+// saja. Logika penyusunan dan teks tidak berubah.
+
+import { Card } from "../ui/Card";
+import { StatusBadge } from "../ui/StatusBadge";
 
 export interface MasukanRekomendasi {
   /** Kecepatan unduh hasil tes (KB/detik), atau null bila belum ada. */
@@ -91,18 +100,26 @@ export default function RekomendasiWifi({ masukan }: RekomendasiWifiProps) {
     <div>
       <ul className="space-y-3">
         {daftar.map((item) => (
-          <li
-            key={item.id}
-            className="rounded-lg border border-zinc-500 bg-zinc-900 px-4 py-3"
-          >
-            <p className="text-sm leading-relaxed text-zinc-100">
-              {item.teks}
-            </p>
-            {item.sesuai && (
-              <p className="mt-1 text-xs text-zinc-300">
-                Paling sesuai dengan hasil tes Anda.
+          <li key={item.id}>
+            {/* Satu daftar berperingkat: semua saran memakai wadah
+                yang sama; yang sesuai hasil dibedakan oleh tinta
+                status "info" + cip berlabel, bukan oleh bentuk. */}
+            <Card
+              status={item.sesuai ? "info" : undefined}
+              padding="none"
+              className="px-4 py-3"
+            >
+              <p className="text-sm leading-relaxed text-zinc-100">
+                {item.teks}
               </p>
-            )}
+              {item.sesuai && (
+                <div className="mt-2">
+                  <StatusBadge status="info">
+                    Paling sesuai dengan hasil tes Anda.
+                  </StatusBadge>
+                </div>
+              )}
+            </Card>
           </li>
         ))}
       </ul>

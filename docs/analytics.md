@@ -90,7 +90,7 @@ diperbaiki, bukan fitur.
 
 | # | Data | Alasan larangan |
 |---|---|---|
-| 1 | Identitas pengguna (id pengguna, email, nama, `google_sub`) | Analitik tidak boleh bisa dikaitkan ke akun |
+| 1 | Identitas pengguna (id pengguna, email, nama) | Analitik tidak boleh bisa dikaitkan ke akun |
 | 2 | Alamat IP (mentah maupun sebagian, mis. /24) | Pengenal jaringan pengguna |
 | 3 | User-Agent (mentah maupun yang dipilah: browser, OS, model HP) | Dipakai untuk fingerprint |
 | 4 | Fingerprint apa pun (canvas, WebGL, font, layar, zona waktu, bahasa) | Pelacakan tanpa cookie |

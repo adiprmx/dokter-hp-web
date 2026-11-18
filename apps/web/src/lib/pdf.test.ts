@@ -99,10 +99,10 @@ describe("kategoriSkor", () => {
   it("mengategorikan skor sesuai ambang 80/50", () => {
     expect(kategoriSkor(100)).toBe("Baik");
     expect(kategoriSkor(80)).toBe("Baik");
-    expect(kategoriSkor(79)).toBe("Cukup");
-    expect(kategoriSkor(50)).toBe("Cukup");
-    expect(kategoriSkor(49)).toBe("Perlu perhatian");
-    expect(kategoriSkor(0)).toBe("Perlu perhatian");
+    expect(kategoriSkor(79)).toBe("Perlu diperhatikan");
+    expect(kategoriSkor(50)).toBe("Perlu diperhatikan");
+    expect(kategoriSkor(49)).toBe("Bermasalah");
+    expect(kategoriSkor(0)).toBe("Bermasalah");
   });
 });
 
@@ -146,7 +146,7 @@ describe("label", () => {
 
   it("memberi label komponen, status, dan sinyal", () => {
     expect(labelKomponen("penyimpanan")).toBe("Penyimpanan");
-    expect(labelStatusKomponen("perlu_perhatian")).toBe("Perlu perhatian");
+    expect(labelStatusKomponen("perlu_perhatian")).toBe("Bermasalah");
     expect(labelSinyal("lemah")).toBe("Lemah");
     expect(labelSinyal("sedang")).toBe("Sedang");
     expect(labelSinyal("kuat")).toBe("Kuat");
@@ -202,9 +202,9 @@ describe("barisEntri", () => {
     expect(baris[0]).toBe(
       "Pemeriksaan kesehatan — 17 November 2026, 22.15",
     );
-    expect(baris[1]).toBe("Skor 78 dari 100 — Cukup");
+    expect(baris[1]).toBe("Skor 78 dari 100 — Perlu diperhatikan");
     expect(baris).toContain("WiFi: Baik (skor 85) — Dari tes web");
-    expect(baris).toContain("Baterai: Cukup (skor 70) — Diisi manual");
+    expect(baris).toContain("Baterai: Perlu diperhatikan (skor 70) — Diisi manual");
   });
 
   it("memformat entri pemeriksaan tanpa ringkasan komponen", () => {
@@ -221,7 +221,7 @@ describe("barisEntri", () => {
     };
     expect(barisEntri(entri)).toEqual([
       "Pemeriksaan kesehatan — 17 November 2026, 10.00",
-      "Skor 78 dari 100 — Cukup",
+      "Skor 78 dari 100 — Perlu diperhatikan",
     ]);
   });
 

@@ -1,13 +1,21 @@
 import { NavLink } from "react-router-dom";
 
-// Navigasi bawah HP (Tim Shell/Routing). Hanya tampil di layar kecil
-// (di tablet/desktop navigasi memakai header). Setiap item punya label
-// teks yang terlihat, bukan ikon saja (a11y.md §6.6), target sentuh
-// minimal 48 px (K-11), dan halaman aktif ditandai garis putih di
-// bawah label — bukan hanya warna.
-
-const FOKUS =
-  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-2";
+// Navigasi bawah HP (Tim Layout, redesign v2.0). Hanya tampil di
+// layar kecil (di tablet/desktop navigasi memakai header). Setiap
+// item punya label teks yang terlihat, bukan ikon saja (a11y.md
+// §6.6), target sentuh minimal 48 px (K-11), dan halaman aktif
+// ditandai PIL berisi di balik ikon (latar permukaan terangkat,
+// 56 x 32 px, bahasa yang sama dengan pil aktif di header): bentuk
+// yang membedakan, bukan hanya warna atau garis tipis. Pil selalu
+// dirender (latar berubah lewat kelas) agar peralihan warnanya
+// halus, bukan muncul/hilang mendadak.
+// Tinggi total nav 68 px (padding 8 + pil 32 + jarak 4 + label 16
+// + padding 8); penyangga di AppLayout memakai angka yang sama.
+// Label tanpa padding horizontal (px-0): label terpanjang
+// ("Pengaturan") butuh seluruh lebar item 72 px di layar 360 px.
+// Fokus keyboard memakai aturan global :focus-visible di
+// styles/tokens.css (satu sumber kebenaran, seperti ui/Button).
+// Padding bawah safe-area agar nav tidak tertutup bilah gestur HP.
 
 function IkonBeranda() {
   return (
@@ -123,7 +131,7 @@ export default function BottomNav() {
   return (
     <nav
       aria-label="Navigasi bawah"
-      className="fixed inset-x-0 bottom-0 z-10 border-t border-zinc-800 bg-black sm:hidden"
+      className="fixed inset-x-0 bottom-0 z-10 border-t border-[var(--color-border)] bg-[var(--color-bg)] pb-[env(safe-area-inset-bottom)] sm:hidden"
     >
       <ul className="mx-auto flex w-full max-w-5xl">
         {ITEM_NAV.map((item) => (
@@ -132,21 +140,26 @@ export default function BottomNav() {
               to={item.ke}
               end={item.akhir}
               className={({ isActive }) =>
-                `flex min-h-[48px] flex-col items-center justify-center gap-0.5 px-1 py-2 text-xs ${FOKUS} ${
-                  isActive ? "font-semibold text-white" : "text-zinc-400"
+                `flex min-h-[48px] flex-col items-center justify-center gap-1 px-0 py-2 text-xs ${
+                  isActive
+                    ? "font-semibold text-white"
+                    : "text-[var(--color-text-muted)]"
                 }`
               }
             >
               {({ isActive }) => (
                 <>
-                  <item.Ikon />
-                  <span>{item.label}</span>
                   <span
                     aria-hidden="true"
-                    className={`mt-0.5 h-0.5 w-6 rounded-full ${
-                      isActive ? "bg-white" : "bg-transparent"
+                    className={`flex h-8 items-center justify-center rounded-full px-4 transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)] ${
+                      isActive
+                        ? "bg-[var(--color-surface-raised)]"
+                        : "bg-transparent"
                     }`}
-                  />
+                  >
+                    <item.Ikon />
+                  </span>
+                  <span className="tracking-tight">{item.label}</span>
                 </>
               )}
             </NavLink>

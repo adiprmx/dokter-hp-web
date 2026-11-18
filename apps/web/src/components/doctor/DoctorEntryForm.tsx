@@ -4,18 +4,23 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { Button } from "../ui/Button";
 
 // Kelas tombol bersama untuk layar dokter — disalin dari pola
 // components/ui/Button (tombol utama putih, sekunder berbingkai
 // Zinc 500) karena layar dokter tidak mengimpor dari components/ui/.
 // Target sentuh minimal 48 px, kontras lolos WCAG AA (a11y.md 4).
+// Redesign v2.0: formulir ini memakai komponen Button; ketiga
+// konstanta di bawah DIPERTAHANKAN apa adanya karena masih dipakai
+// halaman dokter lain (Penyimpanan, Keamanan) sampai giliran
+// rombak mereka tiba. Menghapusnya merusak halaman tersebut.
 export const KELAS_TOMBOL_PRIMER =
   "inline-flex min-h-[48px] items-center justify-center gap-2 rounded-lg " +
   "bg-white px-5 text-base font-medium text-black " +
   "transition-[background-color,transform] duration-150 ease-out " +
   "hover:bg-zinc-200 active:scale-[0.98] " +
-  "disabled:cursor-not-allowed disabled:bg-[#27272a] " +
-  "disabled:text-[#a1a1aa] disabled:active:scale-100";
+  "disabled:cursor-not-allowed disabled:bg-[var(--color-surface-hover)] " +
+  "disabled:text-[var(--color-text-disabled)] disabled:active:scale-100";
 
 export const KELAS_TOMBOL_SEKUNDER =
   "inline-flex min-h-[48px] items-center justify-center gap-2 rounded-lg " +
@@ -23,8 +28,8 @@ export const KELAS_TOMBOL_SEKUNDER =
   "text-base font-medium text-[var(--color-text-primary)] " +
   "transition-[background-color,transform] duration-150 ease-out " +
   "hover:bg-white/5 active:scale-[0.98] " +
-  "disabled:cursor-not-allowed disabled:border-[#27272a] " +
-  "disabled:text-[#a1a1aa] disabled:active:scale-100";
+  "disabled:cursor-not-allowed disabled:border-[var(--color-surface-hover)] " +
+  "disabled:text-[var(--color-text-disabled)] disabled:active:scale-100";
 
 export const KELAS_TOMBOL_BAHAYA =
   "inline-flex min-h-[48px] items-center justify-center gap-2 rounded-lg " +
@@ -32,8 +37,8 @@ export const KELAS_TOMBOL_BAHAYA =
   "text-base font-medium text-[var(--color-error)] " +
   "transition-[background-color,transform] duration-150 ease-out " +
   "hover:bg-[var(--color-error-bg)] active:scale-[0.98] " +
-  "disabled:cursor-not-allowed disabled:border-[#27272a] " +
-  "disabled:text-[#a1a1aa] disabled:active:scale-100";
+  "disabled:cursor-not-allowed disabled:border-[var(--color-surface-hover)] " +
+  "disabled:text-[var(--color-text-disabled)] disabled:active:scale-100";
 
 export type DoctorFieldType =
   | "number"
@@ -106,12 +111,14 @@ const KELAS_INPUT =
   "min-h-[48px] w-full rounded-lg border bg-[var(--color-surface-raised)] " +
   "px-4 text-base text-[var(--color-text-primary)] " +
   "placeholder:text-[var(--color-text-placeholder)] " +
-  "transition-colors duration-150 ease-out";
+  "transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)]";
 
 // Formulir entri riwayat bersama untuk keempat layar dokter.
 // Setiap input punya label terlihat, pesan galat berupa teks di bawah
 // input yang salah (aria-invalid + aria-describedby), dan fokus
 // dipindahkan ke galat pertama saat pengiriman gagal (a11y.md 3.4).
+// Redesign v2.0: tombol memakai komponen ui/Button, transisi memakai
+// token durasi/ease. Props, validasi, dan perilaku tidak berubah.
 export function DoctorEntryForm({
   idFormulir,
   judul,
@@ -349,6 +356,7 @@ export function DoctorEntryForm({
                           htmlFor={idOpsi}
                           className={[
                             "flex min-h-[48px] cursor-pointer items-center gap-3 rounded-lg border px-4",
+                            "transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)]",
                             terpilih
                               ? "border-white bg-white/5"
                               : "border-[var(--color-border-strong)]",
@@ -397,7 +405,7 @@ export function DoctorEntryForm({
                 <div key={field.name} className="flex flex-col gap-2">
                   <label
                     htmlFor={id}
-                    className="flex min-h-[48px] cursor-pointer items-center gap-3 rounded-lg border border-[var(--color-border-strong)] px-4"
+                    className="flex min-h-[48px] cursor-pointer items-center gap-3 rounded-lg border border-[var(--color-border-strong)] px-4 transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)]"
                   >
                     <input
                       id={id}
@@ -497,23 +505,23 @@ export function DoctorEntryForm({
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <button
+        <Button
           type="submit"
           disabled={menyimpan}
-          aria-busy={menyimpan || undefined}
-          className={`${KELAS_TOMBOL_PRIMER} sm:flex-1`}
+          loading={menyimpan}
+          className="sm:flex-1"
         >
           {menyimpan ? "Menyimpan…" : labelSimpan}
-        </button>
+        </Button>
         {onBatal ? (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
             onClick={onBatal}
             disabled={menyimpan}
-            className={`${KELAS_TOMBOL_SEKUNDER} sm:flex-1`}
+            className="sm:flex-1"
           >
             Batal
-          </button>
+          </Button>
         ) : null}
       </div>
     </form>

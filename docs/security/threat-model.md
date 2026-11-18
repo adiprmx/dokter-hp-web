@@ -42,7 +42,7 @@ ancaman Rendah dicatat dan dipantau.
 | # | Aset | Lokasi | Sensitivitas |
 |---|---|---|---|
 | A1 | Data riwayat pengguna: pemeriksaan kesehatan, laporan WiFi, diagnosis AI | D1 (`health_checks`, `wifi_reports`, `ai_diagnoses`, `wifi_sustained_samples`) | Tinggi — data pribadi perangkat dan jaringan pengguna |
-| A2 | Identitas akun: email, nama, `google_sub` | D1 (`users`, `profiles`) | Tinggi — pengenal akun |
+| A2 | Identitas akun: email, nama, provider | D1 (`users`, `profiles`) | Tinggi — pengenal akun |
 | A3 | Hash PIN + salt | D1 (`users.pin_hash`, `users.pin_salt`) | Tinggi — kunci aplikasi; PIN hanya 4–8 digit sehingga hash rentan ditebak bila bocor |
 | A4 | Token sesi (mentah di cookie; hash di D1) | Cookie browser + D1 (`sessions.token_hash`) | Tinggi — token mentah sama dengan akses akun |
 | A5 | Secret server: kunci Gemini, client secret Google OAuth | Secret Worker (Cloudflare) | Kritis — kunci Gemini yang bocor bisa disalahgunakan sampai kuota habis; client secret yang bocor melemahkan OAuth |
@@ -147,7 +147,7 @@ tidak menyimpan data yang tidak perlu).
 | O2 | Spoofing | Pencurian authorization code (code interception) lalu ditukar dengan token | Tinggi | Rendah | PKCE (`code_challenge`/`code_verifier`); penukaran kode hanya di server; redirect URI persis terdaftar di Google Cloud Console |
 | O3 | Spoofing | Redirect URI terbuka (open redirect) dipakai mengarahkan korban ke situs jahat setelah login | Sedang | Sedang | Redirect setelah login hanya ke path internal yang diizinkan (`/dashboard`); tidak ada parameter `next` bebas dari client |
 | O4 | Information Disclosure | Client secret Google bocor lewat repo, log, atau bundle | Tinggi | Rendah | Client secret hanya sebagai secret Worker; tidak pernah di repo, log, atau frontend |
-| O5 | Tampering | Akun diambil alih dengan mendaftarkan `google_sub` orang lain | Tinggi | Rendah | `google_sub` hanya diambil dari token ID yang sudah diverifikasi Google di server; tidak pernah dari input client; kolom `google_sub` UNIQUE |
+| O5 | Tampering | Akun diambil alih dengan mendaftarkan email Google orang lain | Tinggi | Rendah | Akun dikenali dari email Google terverifikasi + provider; email hanya diambil dari profil userinfo Google yang dipanggil server setelah penukaran kode, tidak pernah dari input client; `sub` hanya dibaca sesaat untuk validasi profil dan tidak disimpan; kolom `email` UNIQUE |
 | O6 | Denial of Service | Banjir request ke `/api/auth/google` menghabiskan kuota atau memicu pembatasan Google | Sedang | Sedang | Rate limit 10/menit per IP pada `/api/auth/google` |
 
 ### 5.6 PIN
@@ -190,7 +190,7 @@ tidak menyimpan data yang tidak perlu).
 
 | # | STRIDE | Ancaman | Dampak | Kemungkinan | Mitigasi |
 |---|---|---|---|---|---|
-| C1 | Spoofing (CSRF) | Situs jahat memicu request tulis (hapus akun, hapus data, ubah PIN) atas nama korban yang sedang login | Tinggi | Sedang | Cookie SameSite=Lax; pemeriksaan header `Origin` pada semua endpoint tulis (hanya origin Pages dan Vercel yang diizinkan); endpoint yang mengubah data memakai POST/PATCH/DELETE, bukan GET |
+| C1 | Spoofing (CSRF) | Situs jahat memicu request tulis (hapus akun, hapus data, ubah PIN) atas nama korban yang sedang login | Tinggi | Sedang | Cookie sesi `SameSite=None` (K-50: frontend dan API beda origin) sehingga pertahanan utama adalah pemeriksaan header `Origin` pada semua endpoint tulis (hanya origin Pages dan Vercel yang diizinkan); endpoint yang mengubah data memakai POST/PATCH/DELETE, bukan GET |
 | C2 | Information Disclosure (CORS) | Origin lain membaca respons API memakai kredensial korban | Tinggi | Sedang | CORS hanya mengizinkan dua origin frontend; `credentials: true` hanya untuk origin tersebut; tidak ada wildcard `*` |
 | C3 | Tampering | Origin palsu yang mirip (misalnya subdomain tiruan) lolos pemeriksaan Origin dengan pencocokan substring | Sedang | Sedang | Pencocokan origin harus persis (equality), bukan `includes`/`endsWith` |
 

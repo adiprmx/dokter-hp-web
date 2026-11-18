@@ -19,6 +19,8 @@ import {
 } from "../lib/pin";
 import { ApiError, panggilApi } from "../lib/api";
 import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { tokenStatus } from "../lib/status-warna";
 
 // Layar kunci PIN (/kunci): keypad PIN 4-8 digit, verifikasi lewat
 // POST /api/auth/pin/verify, kunci 30 detik + hitung mundur setelah
@@ -30,11 +32,31 @@ import { Button } from "../components/ui/Button";
 // live saat kunci dimulai dan berakhir, bukan setiap detik (angka yang
 // berubah tiap detik ditandai aria-hidden).
 // Teks mengikuti docs/copy.md bagian 3 dan 13.
+//
+// Redesign v2.0 (Tim Auth, Wave 2): logika TIDAK BERUBAH. Keypad
+// dirancang sebagai alat ukur yang hidup: kotak digit yang terisi
+// memakai bingkai putih (kemajuan terbaca sekilas), kotak memakai
+// bingkai galat saat PIN salah; keadaan terkunci tampil sebagai Card
+// status galat berlabel "Terkunci sementara" + hitung mundur angka
+// mono tabular; formulir PIN hidup di Card permukaan agar tugasnya
+// jelas terpisah dari penjelasan; penjelasan panjang tentang PIN
+// dipindah ke bawah formulir (tugas dulu, penjelasan menyusul, isi
+// teks tidak berubah); panel "Lupa PIN" memakai Card; keadaan muat
+// memakai kerangka yang meniru tata letak akhir + teks "Memuat…"
+// yang terlihat. Warna status HANYA lewat helper status-warna +
+// Card status (spec §4). BUG-01: min-w-0 pada fieldset WAJIB ada.
 
 const JUMLAH_KOTAK = 8;
 
 const CINCIN_FOKUS =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black";
+
+// Bingkai galat kotak digit memakai nilai PENUH token galat (teks),
+// bukan bingkai 45%: garis 1px pada alpha 45% hanya 2,26:1 terhadap
+// latar gelap — di bawah ambang 3:1 non-teks WCAG 1.4.11 untuk batas
+// kolom; nilai penuh 6,40:1. (Bingkai Card status tetap memakai token
+// bingkai — itu komponen bersama, di luar cakupan halaman ini.)
+const BINGKAI_GALAT_KOLOM = tokenStatus("galat").teks;
 
 function kotakKosong(): string[] {
   return Array.from({ length: JUMLAH_KOTAK }, () => "");
@@ -271,9 +293,28 @@ export default function KunciPinPage() {
 
   if (memuat) {
     return (
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
-        <div role="status" className="text-center text-base text-zinc-400">
+      <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
+        <p role="status" className="text-base text-zinc-400">
           Memuat…
+        </p>
+        <div aria-hidden="true" className="mt-6">
+          <div className="h-8 w-2/3 animate-pulse rounded-lg bg-[var(--color-surface-hover)]" />
+          <div className="mt-6 flex gap-2">
+            {Array.from({ length: JUMLAH_KOTAK }, (_, i) => (
+              <div
+                key={i}
+                className="h-12 min-w-0 flex-1 animate-pulse rounded-lg bg-[var(--color-surface-hover)]"
+              />
+            ))}
+          </div>
+          <div className="mt-6 grid grid-cols-3 gap-2">
+            {Array.from({ length: 12 }, (_, i) => (
+              <div
+                key={i}
+                className="h-14 animate-pulse rounded-xl bg-[var(--color-surface-hover)]"
+              />
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -281,16 +322,20 @@ export default function KunciPinPage() {
 
   if (sesiHabis) {
     return (
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
+      <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
         <h1 className="text-2xl font-bold tracking-tight text-white">
           Masukkan PIN
         </h1>
-        <div
+        <Card
+          status="galat"
           role="alert"
-          className="mt-6 rounded-xl border border-red-400/45 bg-red-400/10 px-4 py-3 text-sm leading-relaxed text-red-400"
+          className="mt-6"
+          style={{ color: tokenStatus("galat").teks }}
         >
-          Sesi sudah berakhir. Masuk lagi untuk lanjut.
-        </div>
+          <p className="text-sm leading-relaxed">
+            Sesi sudah berakhir. Masuk lagi untuk lanjut.
+          </p>
+        </Card>
         <Link
           to="/masuk"
           className={`mt-6 flex min-h-[48px] w-full items-center justify-center rounded-xl bg-white px-4 py-3 text-base font-semibold text-black ${CINCIN_FOKUS}`}
@@ -303,16 +348,20 @@ export default function KunciPinPage() {
 
   if (gagalMuat) {
     return (
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
+      <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
         <h1 className="text-2xl font-bold tracking-tight text-white">
           Masukkan PIN
         </h1>
-        <div
+        <Card
+          status="galat"
           role="alert"
-          className="mt-6 rounded-xl border border-red-400/45 bg-red-400/10 px-4 py-3 text-sm leading-relaxed text-red-400"
+          className="mt-6"
+          style={{ color: tokenStatus("galat").teks }}
         >
-          {pesan ?? "Data tidak bisa dimuat. Coba lagi."}
-        </div>
+          <p className="text-sm leading-relaxed">
+            {pesan ?? "Data tidak bisa dimuat. Coba lagi."}
+          </p>
+        </Card>
         <Button
           onClick={() => void periksaSesi()}
           fullWidth
@@ -325,7 +374,7 @@ export default function KunciPinPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
+    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center bg-black px-4 py-12 text-zinc-100">
       <h1
         id="judul-kunci"
         tabIndex={-1}
@@ -336,116 +385,134 @@ export default function KunciPinPage() {
       <p className="mt-2 text-base leading-relaxed text-zinc-400">
         PIN melindungi riwayat pemeriksaan di aplikasi ini.
       </p>
-      <p className="mt-4 text-sm leading-relaxed text-zinc-400">
-        PIN adalah kode 4 sampai 8 angka yang hanya Anda ketahui. PIN dipakai
-        untuk membuka aplikasi ini setiap kali sesi baru dimulai. PIN tidak
-        tersimpan sebagai angka asli — yang disimpan hanya bentuk acaknya di
-        server, jadi tidak ada yang bisa melihat PIN Anda, termasuk kami.
-      </p>
 
       {pesan && (
-        <div
+        <Card
+          status="galat"
           id="pesan-pin"
           role="alert"
-          className="mt-6 rounded-xl border border-red-400/45 bg-red-400/10 px-4 py-3 text-sm leading-relaxed text-red-400"
+          className="mt-6"
+          style={{ color: tokenStatus("galat").teks }}
         >
-          {pesan}
           {terkunci && (
-            <span aria-hidden="true" className="mt-1 block">
-              Coba lagi dalam {sisaDetik} detik.
-            </span>
+            <p className="text-sm font-semibold">Terkunci sementara</p>
           )}
-        </div>
+          <p className="text-sm leading-relaxed">{pesan}</p>
+          {terkunci && (
+            <p aria-hidden="true" className="mt-2 text-sm leading-relaxed">
+              Coba lagi dalam{" "}
+              <span className="dh-numeric text-base font-semibold">
+                {sisaDetik}
+              </span>{" "}
+              detik.
+            </p>
+          )}
+        </Card>
       )}
 
-      <form
-        className="mt-6"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void kirimPin();
-        }}
-      >
-        {/* BUG-01 (QA Wave 4): <fieldset> bawaan punya
-            min-width: min-content, sehingga 8 kotak digit tidak bisa
-            mengecil dan fieldset melebar sampai 2448px (overflow
-            horizontal parah). min-w-0 mengizinkan fieldset menyusut
-            mengikuti wadahnya; tiap input sudah min-w-0 flex-1. */}
-        <fieldset className="min-w-0">
-          <legend className="text-sm font-medium text-zinc-100">PIN</legend>
-          <div className="mt-3 flex gap-2">
-            {digit.map((nilai, indeks) => (
-              <input
-                key={indeks}
-                ref={(el) => {
-                  inputRefs.current[indeks] = el;
-                }}
-                type="tel"
-                inputMode="numeric"
-                autoComplete="off"
-                autoCorrect="off"
-                maxLength={1}
-                value={nilai}
-                disabled={terkunci || memeriksa}
-                aria-label={`Digit ke-${indeks + 1} dari ${JUMLAH_KOTAK}`}
-                aria-invalid={pesan !== null}
-                aria-describedby={pesan ? "pesan-pin" : undefined}
-                onChange={(event) => ubahDigit(indeks, event.target.value)}
-                onKeyDown={(event) => tombolKotak(indeks, event)}
-                onPaste={(event) => tempelDigit(indeks, event)}
-                className={`min-h-[48px] min-w-0 flex-1 rounded-lg border border-zinc-500 bg-zinc-900 text-center text-xl font-semibold text-white disabled:bg-[#27272a] disabled:text-[#a1a1aa] ${CINCIN_FOKUS}`}
-              />
-            ))}
-          </div>
-        </fieldset>
-
-        <div
-          className="mt-6 grid grid-cols-3 gap-2"
-          role="group"
-          aria-label="Keypad angka"
+      <Card padding="lg" className="mt-6">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void kirimPin();
+          }}
         >
-          {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((angka) => (
+          {/* BUG-01 (QA Wave 4): <fieldset> bawaan punya
+              min-width: min-content, sehingga 8 kotak digit tidak bisa
+              mengecil dan fieldset melebar sampai 2448px (overflow
+              horizontal parah). min-w-0 mengizinkan fieldset menyusut
+              mengikuti wadahnya; tiap input sudah min-w-0 flex-1. */}
+          <fieldset className="min-w-0">
+            <legend className="text-sm font-medium text-zinc-100">PIN</legend>
+            <div className="mt-3 flex gap-2">
+              {digit.map((nilai, indeks) => (
+                <input
+                  key={indeks}
+                  ref={(el) => {
+                    inputRefs.current[indeks] = el;
+                  }}
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  maxLength={1}
+                  value={nilai}
+                  disabled={terkunci || memeriksa}
+                  aria-label={`Digit ke-${indeks + 1} dari ${JUMLAH_KOTAK}`}
+                  aria-invalid={pesan !== null}
+                  aria-describedby={pesan ? "pesan-pin" : undefined}
+                  onChange={(event) => ubahDigit(indeks, event.target.value)}
+                  onKeyDown={(event) => tombolKotak(indeks, event)}
+                  onPaste={(event) => tempelDigit(indeks, event)}
+                  style={
+                    pesan
+                      ? { borderColor: BINGKAI_GALAT_KOLOM }
+                      : undefined
+                  }
+                  className={`min-h-[48px] min-w-0 flex-1 rounded-lg border bg-zinc-900 text-center text-xl font-semibold text-white transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)] disabled:bg-[var(--color-surface-hover)] disabled:text-[var(--color-text-disabled)] ${
+                    nilai !== "" ? "border-white" : "border-zinc-500"
+                  } ${CINCIN_FOKUS}`}
+                />
+              ))}
+            </div>
+          </fieldset>
+
+          <div
+            className="mt-6 grid grid-cols-3 gap-2"
+            role="group"
+            aria-label="Keypad angka"
+          >
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((angka) => (
+              <button
+                key={angka}
+                type="button"
+                disabled={terkunci || memeriksa}
+                onClick={() => tekanAngka(angka)}
+                aria-label={`Angka ${angka}`}
+                className={`min-h-[56px] rounded-xl border border-zinc-500 bg-[var(--color-surface-raised)] text-xl font-semibold text-white transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:bg-[var(--color-surface-hover)] active:scale-[0.98] disabled:bg-[var(--color-surface-hover)] disabled:text-[var(--color-text-disabled)] disabled:active:scale-100 ${CINCIN_FOKUS}`}
+              >
+                {angka}
+              </button>
+            ))}
+            <span aria-hidden="true" />
             <button
-              key={angka}
               type="button"
               disabled={terkunci || memeriksa}
-              onClick={() => tekanAngka(angka)}
-              aria-label={`Angka ${angka}`}
-              className={`min-h-[56px] rounded-xl border border-zinc-500 bg-zinc-900 text-xl font-semibold text-white active:bg-zinc-800 disabled:bg-[#27272a] disabled:text-[#a1a1aa] ${CINCIN_FOKUS}`}
+              onClick={() => tekanAngka("0")}
+              aria-label="Angka 0"
+              className={`min-h-[56px] rounded-xl border border-zinc-500 bg-[var(--color-surface-raised)] text-xl font-semibold text-white transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:bg-[var(--color-surface-hover)] active:scale-[0.98] disabled:bg-[var(--color-surface-hover)] disabled:text-[var(--color-text-disabled)] disabled:active:scale-100 ${CINCIN_FOKUS}`}
             >
-              {angka}
+              0
             </button>
-          ))}
-          <span aria-hidden="true" />
-          <button
-            type="button"
-            disabled={terkunci || memeriksa}
-            onClick={() => tekanAngka("0")}
-            aria-label="Angka 0"
-            className={`min-h-[56px] rounded-xl border border-zinc-500 bg-zinc-900 text-xl font-semibold text-white active:bg-zinc-800 disabled:bg-[#27272a] disabled:text-[#a1a1aa] ${CINCIN_FOKUS}`}
-          >
-            0
-          </button>
-          <button
-            type="button"
-            disabled={terkunci || memeriksa}
-            onClick={hapusDigitTerakhir}
-            aria-label="Hapus digit terakhir"
-            className={`min-h-[56px] rounded-xl border border-zinc-500 bg-zinc-900 text-base font-semibold text-white active:bg-zinc-800 disabled:bg-[#27272a] disabled:text-[#a1a1aa] ${CINCIN_FOKUS}`}
-          >
-            Hapus
-          </button>
-        </div>
+            <button
+              type="button"
+              disabled={terkunci || memeriksa}
+              onClick={hapusDigitTerakhir}
+              aria-label="Hapus digit terakhir"
+              className={`min-h-[56px] rounded-xl border border-zinc-500 bg-[var(--color-surface-raised)] text-base font-semibold text-white transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:bg-[var(--color-surface-hover)] active:scale-[0.98] disabled:bg-[var(--color-surface-hover)] disabled:text-[var(--color-text-disabled)] disabled:active:scale-100 ${CINCIN_FOKUS}`}
+            >
+              Hapus
+            </button>
+          </div>
 
-        <Button
-          type="submit"
-          disabled={!bisaKirim}
-          loading={memeriksa}
-          fullWidth
-          className={`mt-6 ${CINCIN_FOKUS}`}
-        >
-          Buka
-        </Button>
-      </form>
+          <Button
+            type="submit"
+            disabled={!bisaKirim}
+            loading={memeriksa}
+            fullWidth
+            className={`mt-6 ${CINCIN_FOKUS}`}
+          >
+            Buka
+          </Button>
+        </form>
+      </Card>
+
+      <p className="mt-8 text-sm leading-relaxed text-zinc-400">
+        PIN adalah kode 4 sampai 8 angka yang hanya Anda ketahui. PIN dipakai
+        untuk membuka aplikasi ini setiap kali sesi baru dimulai. PIN tidak
+        tersimpan sebagai angka asli. Yang disimpan hanya bentuk acaknya di
+        server, jadi tidak ada yang bisa melihat PIN Anda, termasuk kami.
+      </p>
 
       <div className="mt-8">
         <button
@@ -458,10 +525,7 @@ export default function KunciPinPage() {
           Lupa PIN?
         </button>
         {tampilLupaPin && (
-          <div
-            id="panel-lupa-pin"
-            className="mt-3 rounded-xl border border-zinc-500 bg-zinc-900 px-4 py-4"
-          >
+          <Card id="panel-lupa-pin" className="mt-3">
             <h2 className="text-base font-semibold text-white">Lupa PIN</h2>
             <p className="mt-2 text-sm leading-relaxed text-zinc-400">
               PIN tidak bisa dilihat kembali karena yang tersimpan hanya bentuk
@@ -474,7 +538,7 @@ export default function KunciPinPage() {
             >
               Masuk ulang dengan Google
             </a>
-          </div>
+          </Card>
         )}
       </div>
 

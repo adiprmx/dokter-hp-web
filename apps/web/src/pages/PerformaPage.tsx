@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ambilRiwayatDokter,
   buatBodiPerforma,
+  formatTanggalWaktu,
   hapusEntriDokter,
+  klasifikasiPerforma,
   labelKondisiPerforma,
   parseAngka,
   pesanGalatHapus,
@@ -16,9 +18,17 @@ import {
   type PerformaDetail,
 } from "../lib/doctor";
 import {
+  labelStatus,
+  statusDariDoctor,
+  tokenStatus,
+} from "../lib/status-warna";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { MeterStrip } from "../components/ui/MeterStrip";
+import { Skeleton } from "../components/ui/Skeleton";
+import { StatusBadge } from "../components/ui/StatusBadge";
+import {
   DoctorEntryForm,
-  KELAS_TOMBOL_PRIMER,
-  KELAS_TOMBOL_SEKUNDER,
   type DoctorField,
   type DoctorFormValues,
 } from "../components/doctor/DoctorEntryForm";
@@ -145,10 +155,44 @@ function nilaiKeDetail(nilai: NilaiFormPerforma): PerformaDetail {
   return detail;
 }
 
+// Satu pasangan label/nilai di dalam daftar definisi (strip beban
+// terbaru dan detail tiap entri riwayat). Label selalu teks biasa,
+// nilai angka selalu mono tabular (.dh-numeric) dari pemanggil.
+function NilaiDetail({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-sm text-[var(--color-text-muted)]">{label}</dt>
+      <dd className="mt-0.5 break-words text-sm text-[var(--color-text-primary)]">
+        {children}
+      </dd>
+    </div>
+  );
+}
+
 // Dokter Performa (/performa): riwayat kondisi performa + input manual.
 // Tanpa klaim menutup aplikasi lain: web tidak bisa menutup aplikasi
-// lain — pengguna diarahkan ke layar aplikasi terakhir atau mulai
+// lain: pengguna diarahkan ke layar aplikasi terakhir atau mulai
 // ulang HP (copy.md 8, PRODUCT.md 11).
+//
+// Redesign v2.0 (docs/redesign-v20-spec.md §8.4, mode Operate):
+// strip status berwarna di atas (kondisi terbaru + skor + beban HP),
+// formulir dan riwayat di bawah. Alasan tiap keputusan (R-31):
+// - Strip di atas: kondisi terbaru adalah jawaban yang dicari
+//   pengguna, jadi tampil pertama, besar, dan berwarna.
+// - Warna strip dari statusDariDoctor(klasifikasiPerforma):
+//   klasifikasi kanonis lib/doctor.ts, tidak ada ambang di halaman.
+// - MeterStrip skor: skor komponen server (data nyata) dengan zona
+//   warna sebagai arti skala, identitas "Alat ukur".
+// - Grid beban (CPU, suhu, RAM, perangkat): nilai terbaru terbaca
+//   sekilas; hanya nilai yang ada yang tampil, tanpa kotak kosong.
+// - Lebar max-w-2xl dipertahankan: konsistensi keempat halaman
+//   dokter; strip memakai grid 2/4 kolom di dalam lebar itu.
 export default function PerformaPage() {
   const judulRef = useRef<HTMLHeadingElement>(null);
   const [entri, setEntri] = useState<EntriPerforma[]>([]);
@@ -177,7 +221,7 @@ export default function PerformaPage() {
   }, []);
 
   useEffect(() => {
-    document.title = "Dokter Performa — Dokter HP";
+    document.title = "Dokter Performa | Dokter HP";
     judulRef.current?.focus();
     void muat();
   }, [muat]);
@@ -218,7 +262,34 @@ export default function PerformaPage() {
     }
   }
 
-  const kondisiTerbaru = entri[0]?.detail.kondisi;
+  const entriTerbaru = entri[0];
+  const kondisiTerbaru = entriTerbaru?.detail.kondisi;
+  const statusTerbaru = kondisiTerbaru
+    ? statusDariDoctor(klasifikasiPerforma(kondisiTerbaru))
+    : null;
+  const tokenTerbaru = statusTerbaru ? tokenStatus(statusTerbaru) : null;
+  const detailTerbaru = entriTerbaru?.detail;
+
+  // Teks RAM strip: "2 GB dari 8 GB" bila keduanya ada, satu nilai
+  // bila hanya satu yang dicatat. Label mengikuti copy.md 8.
+  const teksRam =
+    detailTerbaru?.ramKosongGb !== undefined &&
+    detailTerbaru?.ramTotalGb !== undefined
+      ? `${formatAngka(detailTerbaru.ramKosongGb)} GB dari ${formatAngka(detailTerbaru.ramTotalGb)} GB`
+      : detailTerbaru?.ramKosongGb !== undefined
+        ? `${formatAngka(detailTerbaru.ramKosongGb)} GB`
+        : detailTerbaru?.ramTotalGb !== undefined
+          ? `${formatAngka(detailTerbaru.ramTotalGb)} GB`
+          : null;
+  const labelRam =
+    detailTerbaru?.ramKosongGb !== undefined ? "RAM yang masih kosong" : "RAM";
+
+  const adaBeban =
+    detailTerbaru !== undefined &&
+    (detailTerbaru.cpuPersen !== undefined ||
+      detailTerbaru.suhuC !== undefined ||
+      teksRam !== null ||
+      detailTerbaru.perangkat !== undefined);
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 pb-16 pt-6">
@@ -233,22 +304,98 @@ export default function PerformaPage() {
         Riwayat kecepatan dan beban HP Anda.
       </p>
 
-      <section
-        aria-label="Batasan versi web"
-        className="mt-4 rounded-xl border border-[var(--color-info-border)] bg-[var(--color-info-bg)] p-4"
-      >
-        <p className="text-sm leading-relaxed text-[var(--color-text-primary)]">
-          Versi web tidak bisa membaca RAM, beban prosesor, atau suhu HP
-          secara langsung. Data di layar ini berasal dari riwayat aplikasi
-          Dokter HP atau dari yang Anda isi sendiri. Versi web juga tidak
-          bisa menutup aplikasi lain — tutup aplikasi dari layar aplikasi
-          terakhir di HP, atau mulai ulang HP bila terasa berat.
-        </p>
-        <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-primary)]">
-          Cara mencatat: ketuk Tambah catatan di bawah, pilih kondisi HP
-          saat ini, dan isi detail yang diketahui. Info perangkat bisa
-          dilihat di Pengaturan &gt; Tentang ponsel di HP.
-        </p>
+      {statusMuat === "memuat" ? (
+        <div aria-hidden="true" className="mt-6">
+          <Skeleton height={200} rounded="lg" />
+        </div>
+      ) : null}
+
+      {statusMuat === "siap" &&
+      entriTerbaru &&
+      kondisiTerbaru &&
+      statusTerbaru &&
+      tokenTerbaru ? (
+        <section aria-label="Kondisi performa terbaru" className="mt-6">
+          <Card status={statusTerbaru} padding="lg">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-[var(--color-text-muted)]">
+                  Kondisi terbaru
+                </p>
+                <p
+                  className="mt-1 text-[length:var(--text-display-lg)] font-bold leading-[var(--leading-display)] tracking-tight"
+                  style={{ color: tokenTerbaru.teks }}
+                >
+                  {labelKondisiPerforma(kondisiTerbaru)}
+                </p>
+                <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+                  Catatan terbaru:{" "}
+                  {formatTanggalWaktu(entriTerbaru.dibuatPada)}
+                </p>
+              </div>
+              <StatusBadge status={statusTerbaru} dot>
+                {labelStatus(statusTerbaru)}
+              </StatusBadge>
+            </div>
+            {entriTerbaru.skor !== null ? (
+              <div className="mt-5">
+                <p className="text-sm text-[var(--color-text-primary)]">
+                  Skor{" "}
+                  <span className="dh-numeric font-semibold">
+                    {entriTerbaru.skor}
+                  </span>{" "}
+                  dari 100
+                </p>
+                <MeterStrip value={entriTerbaru.skor} className="mt-2" />
+              </div>
+            ) : null}
+            {adaBeban && detailTerbaru ? (
+              <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4">
+                {detailTerbaru.cpuPersen !== undefined ? (
+                  <NilaiDetail label="Beban prosesor">
+                    <span className="dh-numeric font-semibold">
+                      {formatAngka(detailTerbaru.cpuPersen)}%
+                    </span>
+                  </NilaiDetail>
+                ) : null}
+                {detailTerbaru.suhuC !== undefined ? (
+                  <NilaiDetail label="Suhu">
+                    <span className="dh-numeric font-semibold">
+                      {formatAngka(detailTerbaru.suhuC)}°C
+                    </span>
+                  </NilaiDetail>
+                ) : null}
+                {teksRam !== null ? (
+                  <NilaiDetail label={labelRam}>
+                    <span className="dh-numeric font-semibold">{teksRam}</span>
+                  </NilaiDetail>
+                ) : null}
+                {detailTerbaru.perangkat ? (
+                  <NilaiDetail label="Perangkat">
+                    {detailTerbaru.perangkat}
+                  </NilaiDetail>
+                ) : null}
+              </dl>
+            ) : null}
+          </Card>
+        </section>
+      ) : null}
+
+      <section aria-label="Batasan versi web" className="mt-6">
+        <Card status="info">
+          <p className="text-sm leading-relaxed text-[var(--color-text-primary)]">
+            Versi web tidak bisa membaca RAM, beban prosesor, atau suhu HP
+            secara langsung. Data di layar ini berasal dari riwayat aplikasi
+            Dokter HP atau dari yang Anda isi sendiri. Versi web juga tidak
+            bisa menutup aplikasi lain. Tutup aplikasi dari layar aplikasi
+            terakhir di HP, atau mulai ulang HP bila terasa berat.
+          </p>
+          <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-primary)]">
+            Cara mencatat: ketuk Tambah catatan di bawah, pilih kondisi HP
+            saat ini, dan isi detail yang diketahui. Info perangkat bisa
+            dilihat di Pengaturan &gt; Tentang ponsel di HP.
+          </p>
+        </Card>
       </section>
 
       {pesanSukses ? (
@@ -269,43 +416,46 @@ export default function PerformaPage() {
       ) : null}
 
       <section aria-label="Tambah catatan performa" className="mt-6">
-        <button
-          type="button"
+        <Button
           onClick={() => setFormTerbuka((buka) => !buka)}
           aria-expanded={formTerbuka}
           aria-controls="form-performa"
-          className={`${KELAS_TOMBOL_PRIMER} w-full sm:w-auto`}
+          className="w-full sm:w-auto"
         >
           {formTerbuka ? "Tutup formulir" : "Tambah catatan"}
-        </button>
+        </Button>
         {formTerbuka ? (
-          <div
-            id="form-performa"
-            className="mt-4 rounded-xl bg-[var(--color-surface)] p-4"
-          >
-            <DoctorEntryForm
-              idFormulir="performa"
-              judul="Isi kondisi performa"
-              fields={FIELDS_PERFORMA}
-              validate={(values) => validasiPerforma(nilaiKeForm(values))}
-              onSubmit={simpan}
-              onBatal={() => setFormTerbuka(false)}
-            />
+          <div id="form-performa" className="mt-4">
+            <Card>
+              <DoctorEntryForm
+                idFormulir="performa"
+                judul="Isi kondisi performa"
+                fields={FIELDS_PERFORMA}
+                validate={(values) => validasiPerforma(nilaiKeForm(values))}
+                onSubmit={simpan}
+                onBatal={() => setFormTerbuka(false)}
+              />
+            </Card>
           </div>
         ) : null}
       </section>
 
       {statusMuat === "siap" && kondisiTerbaru === "sering_lambat" ? (
-        <section
-          aria-label="Saran"
-          className="mt-8 rounded-xl border border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] p-4"
-        >
-          <p className="text-sm leading-relaxed text-[var(--color-text-primary)]">
-            HP terasa berat menurut catatan terbaru. Coba mulai ulang HP —
-            mulai ulang menutup aplikasi yang sedang berjalan dan sering
-            membuat HP terasa ringan lagi. Bila masih berat, tutup aplikasi
-            yang tidak dipakai dari layar aplikasi terakhir di HP.
-          </p>
+        <section aria-labelledby="saran-performa-judul" className="mt-8">
+          <Card status="peringatan">
+            <h2
+              id="saran-performa-judul"
+              className="text-base font-semibold text-[var(--color-text-primary)]"
+            >
+              Saran
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-primary)]">
+              HP terasa berat menurut catatan terbaru. Coba mulai ulang HP.
+              Mulai ulang menutup aplikasi yang sedang berjalan dan sering
+              membuat HP terasa ringan lagi. Bila masih berat, tutup aplikasi
+              yang tidak dipakai dari layar aplikasi terakhir di HP.
+            </p>
+          </Card>
         </section>
       ) : null}
 
@@ -317,33 +467,43 @@ export default function PerformaPage() {
           Riwayat performa
         </h2>
         {statusMuat === "memuat" ? (
-          <p role="status" className="mt-4 text-sm text-[var(--color-text-muted)]">
-            Mengambil data…
-          </p>
+          <>
+            <p
+              role="status"
+              className="mt-4 text-sm text-[var(--color-text-muted)]"
+            >
+              Mengambil data…
+            </p>
+            <div aria-hidden="true" className="mt-4 flex flex-col gap-3">
+              <Skeleton height={120} rounded="lg" />
+              <Skeleton height={120} rounded="lg" />
+            </div>
+          </>
         ) : null}
         {statusMuat === "galat" ? (
-          <div className="mt-4 flex flex-col items-start gap-3">
-            <p
-              role="alert"
-              className="text-sm text-[var(--color-error)]"
-            >
-              {galatMuat ?? "Data tidak bisa dimuat. Coba lagi."}
-            </p>
-            <button
-              type="button"
-              onClick={() => void muat()}
-              className={KELAS_TOMBOL_SEKUNDER}
-            >
-              Coba lagi
-            </button>
+          <div className="mt-4">
+            <Card status="galat">
+              <p role="alert" className="text-sm text-[var(--color-error)]">
+                {galatMuat ?? "Data tidak bisa dimuat. Coba lagi."}
+              </p>
+              <Button
+                variant="secondary"
+                onClick={() => void muat()}
+                className="mt-3"
+              >
+                Coba lagi
+              </Button>
+            </Card>
           </div>
         ) : null}
         {statusMuat === "siap" && entri.length === 0 ? (
-          <div className="mt-4 rounded-xl bg-[var(--color-surface)]">
-            <DoctorEmptyState
-              judul="Belum ada data performa"
-              isi="Belum ada riwayat performa. Isi kondisi performa secara manual, atau sinkronkan dari aplikasi Dokter HP di Android."
-            />
+          <div className="mt-4">
+            <Card padding="none">
+              <DoctorEmptyState
+                judul="Belum ada data performa"
+                isi="Belum ada riwayat performa. Isi kondisi performa secara manual, atau sinkronkan dari aplikasi Dokter HP di Android."
+              />
+            </Card>
           </div>
         ) : null}
         {statusMuat === "siap" && entri.length > 0 ? (
@@ -354,57 +514,82 @@ export default function PerformaPage() {
               onHapus={hapus}
               renderDetail={(item) => {
                 const detail = item.detail;
+                const kondisi = detail.kondisi;
+                const warnaKondisi = kondisi
+                  ? tokenStatus(
+                      statusDariDoctor(klasifikasiPerforma(kondisi)),
+                    ).teks
+                  : undefined;
+                const adaNilai =
+                  detail.ramTotalGb !== undefined ||
+                  detail.ramKosongGb !== undefined ||
+                  detail.cpuPersen !== undefined ||
+                  detail.suhuC !== undefined ||
+                  detail.perangkat !== undefined ||
+                  detail.android !== undefined ||
+                  detail.prosesor !== undefined;
                 return (
                   <>
                     <p>
                       Kondisi:{" "}
-                      <span className="font-semibold">
-                        {detail.kondisi
-                          ? labelKondisiPerforma(detail.kondisi)
+                      <span
+                        className="font-semibold"
+                        style={
+                          warnaKondisi ? { color: warnaKondisi } : undefined
+                        }
+                      >
+                        {kondisi
+                          ? labelKondisiPerforma(kondisi)
                           : "tidak tersedia"}
                       </span>
                     </p>
                     {detail.catatan ? <p>{detail.catatan}</p> : null}
-                    {detail.ramTotalGb !== undefined ? (
-                      <p>
-                        RAM:{" "}
-                        <span className="dh-numeric">
-                          {formatAngka(detail.ramTotalGb)} GB
-                        </span>
-                      </p>
-                    ) : null}
-                    {detail.ramKosongGb !== undefined ? (
-                      <p>
-                        RAM yang masih kosong:{" "}
-                        <span className="dh-numeric">
-                          {formatAngka(detail.ramKosongGb)} GB
-                        </span>
-                      </p>
-                    ) : null}
-                    {detail.cpuPersen !== undefined ? (
-                      <p>
-                        Beban prosesor:{" "}
-                        <span className="dh-numeric">
-                          {formatAngka(detail.cpuPersen)}%
-                        </span>
-                      </p>
-                    ) : null}
-                    {detail.suhuC !== undefined ? (
-                      <p>
-                        Suhu:{" "}
-                        <span className="dh-numeric">
-                          {formatAngka(detail.suhuC)}°C
-                        </span>
-                      </p>
-                    ) : null}
-                    {detail.perangkat ? (
-                      <p>Perangkat: {detail.perangkat}</p>
-                    ) : null}
-                    {detail.android ? (
-                      <p>Versi Android: {detail.android}</p>
-                    ) : null}
-                    {detail.prosesor ? (
-                      <p>Prosesor: {detail.prosesor}</p>
+                    {adaNilai ? (
+                      <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+                        {detail.ramTotalGb !== undefined ? (
+                          <NilaiDetail label="RAM">
+                            <span className="dh-numeric">
+                              {formatAngka(detail.ramTotalGb)} GB
+                            </span>
+                          </NilaiDetail>
+                        ) : null}
+                        {detail.ramKosongGb !== undefined ? (
+                          <NilaiDetail label="RAM yang masih kosong">
+                            <span className="dh-numeric">
+                              {formatAngka(detail.ramKosongGb)} GB
+                            </span>
+                          </NilaiDetail>
+                        ) : null}
+                        {detail.cpuPersen !== undefined ? (
+                          <NilaiDetail label="Beban prosesor">
+                            <span className="dh-numeric">
+                              {formatAngka(detail.cpuPersen)}%
+                            </span>
+                          </NilaiDetail>
+                        ) : null}
+                        {detail.suhuC !== undefined ? (
+                          <NilaiDetail label="Suhu">
+                            <span className="dh-numeric">
+                              {formatAngka(detail.suhuC)}°C
+                            </span>
+                          </NilaiDetail>
+                        ) : null}
+                        {detail.perangkat ? (
+                          <NilaiDetail label="Perangkat">
+                            {detail.perangkat}
+                          </NilaiDetail>
+                        ) : null}
+                        {detail.android ? (
+                          <NilaiDetail label="Versi Android">
+                            {detail.android}
+                          </NilaiDetail>
+                        ) : null}
+                        {detail.prosesor ? (
+                          <NilaiDetail label="Prosesor">
+                            {detail.prosesor}
+                          </NilaiDetail>
+                        ) : null}
+                      </dl>
                     ) : null}
                   </>
                 );

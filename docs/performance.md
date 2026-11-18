@@ -260,25 +260,38 @@ Aturan:
 
 ### 4.3 Indeks (wajib)
 
-Semua indeks di bawah ini sudah ada di skema `0001_init.sql`
-(`ARCHITECTURE.md` bagian 5) dan wajib dipertahankan di setiap
-migrasi berikutnya. Menghapus indeks tanpa pengganti adalah
-pelanggaran anggaran ini.
+Indeks di bawah ini adalah indeks yang benar-benar ada di
+migrasi D1 (`apps/api/migrations/0001_init.sql` sampai
+`0004_pin_rate_sessions.sql`, lihat `ARCHITECTURE.md` bagian 5)
+dan wajib dipertahankan di setiap migrasi berikutnya. Menghapus
+indeks tanpa pengganti adalah pelanggaran anggaran ini.
+Batasan `UNIQUE` di SQLite otomatis membuat indeks, tetapi
+indeks itu tanpa nama — barisnya ditulis sebagai batasan,
+bukan sebagai indeks bernama. Tidak ada indeks yang memakai
+arah `DESC` di migrasi; pengurutan terbaru dulu tetap terlayani
+karena SQLite dapat memindai indeks ASC secara terbalik.
 
-| Tabel | Indeks | Query yang dilayani |
-|---|---|---|
-| `users` | `users_email_idx (email)` | Cari pengguna berdasarkan email |
-| `users` | `UNIQUE (google_sub)` | Login Google: cari pengguna dari `google_sub` |
-| `sessions` | `sessions_token_hash_idx (token_hash)` | Verifikasi sesi di setiap request |
-| `sessions` | `sessions_user_id_idx (user_id)` | Daftar sesi aktif milik pengguna |
-| `health_checks` | `health_checks_user_id_idx (user_id)` | Daftar pemeriksaan milik pengguna |
-| `health_checks` | `health_checks_dibuat_pada_idx (dibuat_pada DESC)` | Urutan terbaru dulu |
-| `wifi_reports` | `wifi_reports_user_id_idx (user_id)` | Daftar laporan milik pengguna |
-| `wifi_reports` | `wifi_reports_dibuat_pada_idx (dibuat_pada DESC)` | Urutan terbaru dulu |
-| `wifi_sustained_samples` | `wifi_sustained_samples_report_idx (wifi_report_id)` | Sampel per laporan |
-| `ai_diagnoses` | `ai_diagnoses_user_id_idx (user_id)` | Riwayat diagnosis milik pengguna |
-| `ai_diagnoses` | `ai_diagnoses_health_check_id_idx (health_check_id)` | Diagnosis terkait satu pemeriksaan |
-| `ai_diagnoses` | `ai_diagnoses_dibuat_pada_idx (dibuat_pada DESC)` | Urutan terbaru dulu |
+| Tabel | Indeks | Migrasi | Query yang dilayani |
+|---|---|---|---|
+| `users` | Batasan `UNIQUE (email)` (tanpa indeks bernama) | 0001 | Cari pengguna berdasarkan email (login) |
+| `users` | `idx_users_dibuat_pada (dibuat_pada)` | 0001 | Urutan pendaftaran |
+| `sessions` | Batasan `UNIQUE (token_hash)` (tanpa indeks bernama) | 0001 | Verifikasi sesi di setiap request |
+| `sessions` | `idx_sessions_user_id (user_id)` | 0001 | Daftar sesi aktif milik pengguna |
+| `sessions` | `idx_sessions_expires_at (expires_at)` | 0001 | Pembersihan sesi kedaluwarsa |
+| `profiles` | `idx_profiles_dibuat_pada (dibuat_pada)` | 0001 | Urutan profil berdasarkan waktu dibuat |
+| `health_checks` | `idx_health_checks_user_id (user_id)` | 0001 | Daftar pemeriksaan milik pengguna |
+| `health_checks` | `idx_health_checks_dibuat_pada (dibuat_pada)` | 0001 | Urutan terbaru dulu |
+| `wifi_reports` | `idx_wifi_reports_user_id (user_id)` | 0001 | Daftar laporan milik pengguna |
+| `wifi_reports` | `idx_wifi_reports_dibuat_pada (dibuat_pada)` | 0001 | Urutan terbaru dulu |
+| `wifi_sustained_samples` | Batasan `UNIQUE (wifi_report_id, detik_ke)` (tanpa indeks bernama) | 0003 | Satu sampel per detik per laporan (upsert) |
+| `wifi_sustained_samples` | `idx_wifi_sustained_samples_report (wifi_report_id)` | 0003 | Sampel per laporan |
+| `ai_diagnoses` | `idx_ai_diagnoses_user_id (user_id)` | 0001 | Riwayat diagnosis milik pengguna |
+| `ai_diagnoses` | `idx_ai_diagnoses_dibuat_pada (dibuat_pada)` | 0001 | Urutan terbaru dulu |
+| `ai_diagnoses` | `idx_ai_diagnoses_health_check_id (health_check_id)` | 0001 | Diagnosis terkait satu pemeriksaan |
+| `ai_cache` | Batasan `UNIQUE (pertanyaan_hash)` (tanpa indeks bernama) | 0002 | Cari cache jawaban per pertanyaan |
+| `ai_cache` | `idx_ai_cache_pertanyaan_hash (pertanyaan_hash)` | 0002 | Cari cache jawaban per pertanyaan |
+| `ai_cache` | `idx_ai_cache_dibuat_pada (dibuat_pada)` | 0002 | Urutan cache berdasarkan waktu dibuat |
+| `rate_limits` | `idx_rate_limits_kedaluwarsa (kedaluwarsa_pada)` | 0004 | Pembersihan entri rate limit kedaluwarsa |
 
 Aturan indeks:
 

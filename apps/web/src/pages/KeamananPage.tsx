@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ambilRiwayatDokter,
   aplikasiPerluDitinjau,
+  BATAS_IZIN_PERLU_TINJAU,
   buatBodiKeamanan,
   formatTanggalWaktu,
   gabungAplikasiKeamanan,
   hapusEntriDokter,
+  klasifikasiKeamanan,
   labelSumber,
   parseAngka,
   pesanGalatHapus,
@@ -14,19 +16,25 @@ import {
   simpanEntriDokter,
   validasiKeamanan,
   type AplikasiDenganAsal,
+  type DoctorStatus,
   type EntriKeamanan,
 } from "../lib/doctor";
 import {
+  labelStatus,
+  statusDariDoctor,
+  tokenStatus,
+} from "../lib/status-warna";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { EmptyState } from "../components/ui/EmptyState";
+import { Skeleton } from "../components/ui/Skeleton";
+import { StatusBadge } from "../components/ui/StatusBadge";
+import {
   DoctorEntryForm,
-  KELAS_TOMBOL_PRIMER,
-  KELAS_TOMBOL_SEKUNDER,
   type DoctorField,
   type DoctorFormValues,
 } from "../components/doctor/DoctorEntryForm";
-import {
-  DoctorEmptyState,
-  DoctorHistoryList,
-} from "../components/doctor/DoctorHistoryList";
+import { DoctorHistoryList } from "../components/doctor/DoctorHistoryList";
 
 const FIELDS_KEAMANAN: DoctorField[] = [
   {
@@ -56,33 +64,69 @@ const FIELDS_KEAMANAN: DoctorField[] = [
 
 type StatusMuat = "memuat" | "siap" | "galat";
 
+// Klasifikasi TAMPILAN satu aplikasi, memakai ambang yang sudah ada
+// (BATAS_IZIN_PERLU_TINJAU, PRODUCT.md 4.5). Bukan logika penilaian
+// baru: daftar "Perlu ditinjau" tetap dihitung aplikasiPerluDitinjau,
+// dan fungsi ini hanya menentukan warna kartu + label tiap baris.
+// Aplikasi sistem yang meminta banyak izin tidak bisa dihapus, jadi
+// warnanya kuning ("Periksa"), bukan merah.
+function statusAplikasi(aplikasi: AplikasiDenganAsal): DoctorStatus {
+  if (aplikasi.izinBerbahaya < BATAS_IZIN_PERLU_TINJAU) return "baik";
+  return aplikasi.sistem ? "cukup" : "perlu_perhatian";
+}
+
+// Label cip tiap aplikasi. Makna selalu dibawa teks ini, bukan hanya
+// warna kartu (aksesibilitas: buta warna).
+function labelAplikasi(status: DoctorStatus): string {
+  if (status === "perlu_perhatian") return "Berisiko";
+  if (status === "cukup") return "Periksa";
+  return "Aman";
+}
+
 function BarisAplikasi({ aplikasi }: { aplikasi: AplikasiDenganAsal }) {
+  const statusDoctor = statusAplikasi(aplikasi);
+  const status = statusDariDoctor(statusDoctor);
+  const token = tokenStatus(status);
   return (
-    <li className="rounded-xl bg-[var(--color-surface)] p-4">
-      <p className="text-sm font-medium text-[var(--color-text-primary)]">
-        {aplikasi.nama} —{" "}
-        <span className="dh-numeric">
-          {aplikasi.izinBerbahaya} izin berbahaya
-        </span>
-      </p>
-      <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--color-text-muted)]">
-        <span>
-          {labelSumber(aplikasi.sumber)} —{" "}
-          {formatTanggalWaktu(aplikasi.dibuatPada)}
-        </span>
-        {aplikasi.sistem ? (
-          <span className="inline-flex items-center rounded-full border border-[var(--color-border-strong)] px-3 py-0.5 text-sm text-[var(--color-text-primary)]">
-            Aplikasi sistem
+    <li>
+      <Card status={status}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <p className="min-w-0 flex-1 break-words text-base font-medium text-[var(--color-text-primary)]">
+            {aplikasi.nama}
+          </p>
+          <StatusBadge status={status}>
+            {labelAplikasi(statusDoctor)}
+          </StatusBadge>
+        </div>
+        <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+          <span
+            className="dh-numeric font-semibold"
+            style={{ color: token.teks }}
+          >
+            {aplikasi.izinBerbahaya} izin berbahaya
           </span>
-        ) : null}
-      </p>
+          {aplikasi.sistem ? (
+            <span className="inline-flex items-center rounded-full border border-[var(--color-border-strong)] px-3 py-0.5 text-sm text-[var(--color-text-primary)]">
+              Aplikasi sistem
+            </span>
+          ) : null}
+        </p>
+        <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+          {labelSumber(aplikasi.sumber)} ·{" "}
+          {formatTanggalWaktu(aplikasi.dibuatPada)}
+        </p>
+      </Card>
     </li>
   );
 }
 
 // Dokter Keamanan (/keamanan): daftar temuan keamanan dari riwayat.
-// Data hanya berasal dari APK Dokter HP atau catatan manual — di web
-// TIDAK ADA pemindaian baru (copy.md 9, PRODUCT.md 4.5).
+// Data hanya berasal dari APK Dokter HP atau catatan manual. Di web
+// tidak ada pemindaian baru (copy.md 9, PRODUCT.md 4.5).
+// Redesign v2.0: strip ringkasan berwarna di atas (jumlah + label
+// status), tiap aplikasi dalam kartu status + cip berlabel teks,
+// dua daftar berdampingan di desktop. Logika penilaian risiko dan
+// ambang tidak berubah, hanya tampilan.
 export default function KeamananPage() {
   const judulRef = useRef<HTMLHeadingElement>(null);
   const [entri, setEntri] = useState<EntriKeamanan[]>([]);
@@ -124,6 +168,19 @@ export default function KeamananPage() {
     () => aplikasiPerluDitinjau(semuaAplikasi),
     [semuaAplikasi],
   );
+  const statusKeamanan = useMemo(
+    () => klasifikasiKeamanan(perluDitinjau.length),
+    [perluDitinjau],
+  );
+  const statusRingkasan = statusDariDoctor(statusKeamanan);
+  const jumlahSistem = useMemo(
+    () => semuaAplikasi.filter((aplikasi) => aplikasi.sistem).length,
+    [semuaAplikasi],
+  );
+  const kalimatRingkasan =
+    statusKeamanan === "baik"
+      ? "Tidak ada aplikasi yang perlu ditinjau dari data terakhir."
+      : `Aplikasi di bawah meminta ${BATAS_IZIN_PERLU_TINJAU} izin berbahaya atau lebih. Tinjau satu per satu.`;
 
   function validasi(values: DoctorFormValues): Record<string, string> {
     return validasiKeamanan({
@@ -171,7 +228,7 @@ export default function KeamananPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 pb-16 pt-6">
+    <div className="mx-auto w-full max-w-4xl px-4 pb-16 pt-6">
       <h1
         ref={judulRef}
         tabIndex={-1}
@@ -179,24 +236,23 @@ export default function KeamananPage() {
       >
         Dokter Keamanan
       </h1>
-      <p className="mt-2 text-base leading-relaxed text-[var(--color-text-muted)]">
+      <p className="mt-2 max-w-[65ch] text-base leading-relaxed text-[var(--color-text-muted)]">
         Tinjau aplikasi dan izin yang berisiko di HP Anda.
       </p>
 
-      <section
-        aria-label="Batasan versi web"
-        className="mt-4 rounded-xl border border-[var(--color-info-border)] bg-[var(--color-info-bg)] p-4"
-      >
-        <p className="text-sm leading-relaxed text-[var(--color-text-primary)]">
-          Versi web tidak bisa memindai aplikasi di HP. Data di layar ini
-          hanya berasal dari riwayat aplikasi Dokter HP di Android. Untuk
-          pemindaian baru, jalankan Dokter Keamanan dari aplikasi Android.
-        </p>
-        <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-primary)]">
-          Cara mencatat: salin nama aplikasi dan jumlah izin berbahayanya
-          dari hasil pemindaian di aplikasi Dokter HP, lalu ketuk Tambah
-          catatan di bawah.
-        </p>
+      <section aria-label="Batasan versi web" className="mt-4">
+        <Card status="info">
+          <p className="max-w-[65ch] text-sm leading-relaxed text-[var(--color-text-primary)]">
+            Versi web tidak bisa memindai aplikasi di HP. Data di layar ini
+            hanya berasal dari riwayat aplikasi Dokter HP di Android. Untuk
+            pemindaian baru, jalankan Dokter Keamanan dari aplikasi Android.
+          </p>
+          <p className="mt-2 max-w-[65ch] text-sm leading-relaxed text-[var(--color-text-primary)]">
+            Cara mencatat: salin nama aplikasi dan jumlah izin berbahayanya
+            dari hasil pemindaian di aplikasi Dokter HP, lalu ketuk Tambah
+            catatan di bawah.
+          </p>
+        </Card>
       </section>
 
       {pesanSukses ? (
@@ -217,121 +273,197 @@ export default function KeamananPage() {
       ) : null}
 
       <section aria-label="Tambah catatan keamanan" className="mt-6">
-        <button
-          type="button"
+        <Button
           onClick={() => setFormTerbuka((buka) => !buka)}
           aria-expanded={formTerbuka}
           aria-controls="form-keamanan"
-          className={`${KELAS_TOMBOL_PRIMER} w-full sm:w-auto`}
+          className="w-full sm:w-auto"
         >
           {formTerbuka ? "Tutup formulir" : "Tambah catatan"}
-        </button>
+        </Button>
         {formTerbuka ? (
-          <div
-            id="form-keamanan"
-            className="mt-4 rounded-xl bg-[var(--color-surface)] p-4"
-          >
-            <DoctorEntryForm
-              idFormulir="keamanan"
-              judul="Isi temuan keamanan"
-              deskripsi="Satu aplikasi per catatan. Salin dari hasil pemindaian aplikasi Dokter HP di Android."
-              fields={FIELDS_KEAMANAN}
-              validate={validasi}
-              onSubmit={simpan}
-              onBatal={() => setFormTerbuka(false)}
-            />
+          <div id="form-keamanan" className="mt-4">
+            <Card>
+              <DoctorEntryForm
+                idFormulir="keamanan"
+                judul="Isi temuan keamanan"
+                deskripsi="Satu aplikasi per catatan. Salin dari hasil pemindaian aplikasi Dokter HP di Android."
+                fields={FIELDS_KEAMANAN}
+                validate={validasi}
+                onSubmit={simpan}
+                onBatal={() => setFormTerbuka(false)}
+              />
+            </Card>
           </div>
         ) : null}
       </section>
 
       {statusMuat === "memuat" ? (
-        <p role="status" className="mt-8 text-sm text-[var(--color-text-muted)]">
-          Mengambil data…
-        </p>
+        <div className="mt-8">
+          <p role="status" className="text-sm text-[var(--color-text-muted)]">
+            Mengambil data…
+          </p>
+          <div className="mt-4 flex flex-col gap-3">
+            <Skeleton
+              height={132}
+              rounded="lg"
+              label="Memuat ringkasan keamanan"
+            />
+            <Skeleton
+              height={104}
+              rounded="lg"
+              label="Memuat daftar aplikasi"
+            />
+            <Skeleton
+              height={104}
+              rounded="lg"
+              label="Memuat daftar aplikasi"
+            />
+            <Skeleton
+              height={104}
+              rounded="lg"
+              label="Memuat daftar aplikasi"
+            />
+          </div>
+        </div>
       ) : null}
       {statusMuat === "galat" ? (
-        <div className="mt-8 flex flex-col items-start gap-3">
-          <p
-            role="alert"
-            className="text-sm text-[var(--color-error)]"
-          >
-            {galatMuat ?? "Data tidak bisa dimuat. Coba lagi."}
-          </p>
-          <button
-            type="button"
-            onClick={() => void muat()}
-            className={KELAS_TOMBOL_SEKUNDER}
-          >
-            Coba lagi
-          </button>
+        <div className="mt-8">
+          <Card status="galat">
+            <p
+              role="alert"
+              className="text-sm leading-relaxed text-[var(--color-error)]"
+            >
+              {galatMuat ?? "Data tidak bisa dimuat. Coba lagi."}
+            </p>
+            <div className="mt-4">
+              <Button variant="secondary" onClick={() => void muat()}>
+                Coba lagi
+              </Button>
+            </div>
+          </Card>
         </div>
       ) : null}
 
       {statusMuat === "siap" && entri.length === 0 ? (
-        <div className="mt-8 rounded-xl bg-[var(--color-surface)]">
-          <DoctorEmptyState
-            judul="Belum ada data keamanan"
-            isi="Belum ada riwayat pemindaian keamanan. Jalankan Dokter Keamanan dari aplikasi Dokter HP di Android untuk mengisi data ini."
+        <div className="mt-8">
+          <EmptyState
+            title="Belum ada data keamanan"
+            description="Belum ada riwayat pemindaian keamanan. Jalankan Dokter Keamanan dari aplikasi Dokter HP di Android untuk mengisi data ini."
           />
         </div>
       ) : null}
 
       {statusMuat === "siap" && entri.length > 0 ? (
         <>
-          <section aria-labelledby="perlu-ditinjau-judul" className="mt-8">
-            <h2
-              id="perlu-ditinjau-judul"
-              className="text-lg font-semibold text-[var(--color-text-primary)]"
-            >
-              Perlu ditinjau
-            </h2>
-            <p className="mt-1 text-sm leading-relaxed text-[var(--color-text-muted)]">
-              Aplikasi di bawah ini meminta 4 izin berbahaya atau lebih.
-              Tinjau satu per satu: bila aplikasi tidak dikenal atau tidak
-              dipakai lagi, hapus dari Pengaturan &gt; Aplikasi di HP.
-            </p>
-            {perluDitinjau.length === 0 ? (
-              <p className="mt-4 rounded-xl bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text-muted)]">
-                Tidak ada aplikasi yang perlu ditinjau dari data terakhir.
-              </p>
-            ) : (
-              <ul className="mt-4 flex flex-col gap-3">
-                {perluDitinjau.map((aplikasi) => (
-                  <BarisAplikasi
-                    key={aplikasi.nama.toLowerCase()}
-                    aplikasi={aplikasi}
-                  />
-                ))}
-              </ul>
-            )}
+          <section aria-labelledby="ringkasan-keamanan-judul" className="mt-8">
+            <Card status={statusRingkasan} padding="lg">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <h2
+                    id="ringkasan-keamanan-judul"
+                    className="text-lg font-semibold text-[var(--color-text-primary)]"
+                  >
+                    Ringkasan keamanan
+                  </h2>
+                  <p className="mt-3 flex flex-wrap items-baseline gap-x-2">
+                    <span
+                      className="dh-numeric text-[length:var(--text-display-lg)] font-bold leading-[var(--leading-display)]"
+                      style={{ color: tokenStatus(statusRingkasan).teks }}
+                    >
+                      {perluDitinjau.length}
+                    </span>
+                    <span className="text-base text-[var(--color-text-primary)]">
+                      aplikasi perlu ditinjau
+                    </span>
+                  </p>
+                  <p className="mt-2 max-w-[65ch] text-sm leading-relaxed text-[var(--color-text-primary)]">
+                    {kalimatRingkasan}
+                  </p>
+                  <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+                    {semuaAplikasi.length} aplikasi diperiksa. {jumlahSistem}{" "}
+                    di antaranya aplikasi sistem.
+                  </p>
+                </div>
+                <StatusBadge status={statusRingkasan}>
+                  {labelStatus(statusRingkasan)}
+                </StatusBadge>
+              </div>
+            </Card>
           </section>
 
-          <section aria-labelledby="semua-aplikasi-judul" className="mt-8">
-            <h2
-              id="semua-aplikasi-judul"
-              className="text-lg font-semibold text-[var(--color-text-primary)]"
+          <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
+            <section
+              aria-labelledby="perlu-ditinjau-judul"
+              className="min-w-0"
             >
-              Semua aplikasi
-            </h2>
-            <p className="mt-1 text-sm leading-relaxed text-[var(--color-text-muted)]">
-              Aplikasi sistem adalah bagian dari HP dan biasanya tidak bisa
-              dihapus.
-            </p>
-            {semuaAplikasi.length === 0 ? (
-              <p className="mt-4 rounded-xl bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text-muted)]">
-                Catatan yang tersimpan belum berisi daftar aplikasi.
+              <h2
+                id="perlu-ditinjau-judul"
+                className="text-lg font-semibold text-[var(--color-text-primary)]"
+              >
+                Perlu ditinjau
+              </h2>
+              <p className="mt-1 max-w-[65ch] text-sm leading-relaxed text-[var(--color-text-muted)]">
+                Aplikasi di bawah ini meminta {BATAS_IZIN_PERLU_TINJAU} izin
+                berbahaya atau lebih. Tinjau satu per satu: bila aplikasi
+                tidak dikenal atau tidak dipakai lagi, hapus dari Pengaturan
+                &gt; Aplikasi di HP.
               </p>
-            ) : (
-              <ul className="mt-4 flex flex-col gap-3">
-                {semuaAplikasi.map((aplikasi) => (
-                  <BarisAplikasi
-                    key={aplikasi.nama.toLowerCase()}
-                    aplikasi={aplikasi}
-                  />
-                ))}
-              </ul>
-            )}
-          </section>
+              {perluDitinjau.length === 0 ? (
+                <div className="mt-4">
+                  <Card status="sukses">
+                    <p className="text-sm leading-relaxed text-[var(--color-text-primary)]">
+                      Tidak ada aplikasi yang perlu ditinjau dari data
+                      terakhir.
+                    </p>
+                  </Card>
+                </div>
+              ) : (
+                <ul className="mt-4 flex flex-col gap-3">
+                  {perluDitinjau.map((aplikasi) => (
+                    <BarisAplikasi
+                      key={aplikasi.nama.toLowerCase()}
+                      aplikasi={aplikasi}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section
+              aria-labelledby="semua-aplikasi-judul"
+              className="min-w-0"
+            >
+              <h2
+                id="semua-aplikasi-judul"
+                className="text-lg font-semibold text-[var(--color-text-primary)]"
+              >
+                Semua aplikasi
+              </h2>
+              <p className="mt-1 max-w-[65ch] text-sm leading-relaxed text-[var(--color-text-muted)]">
+                Aplikasi sistem adalah bagian dari HP dan biasanya tidak bisa
+                dihapus.
+              </p>
+              {semuaAplikasi.length === 0 ? (
+                <div className="mt-4">
+                  <Card>
+                    <p className="text-sm leading-relaxed text-[var(--color-text-primary)]">
+                      Catatan yang tersimpan belum berisi daftar aplikasi.
+                    </p>
+                  </Card>
+                </div>
+              ) : (
+                <ul className="mt-4 flex flex-col gap-3">
+                  {semuaAplikasi.map((aplikasi) => (
+                    <BarisAplikasi
+                      key={aplikasi.nama.toLowerCase()}
+                      aplikasi={aplikasi}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+          </div>
 
           <section aria-labelledby="riwayat-keamanan-judul" className="mt-8">
             <h2
@@ -353,7 +485,7 @@ export default function KeamananPage() {
                     <>
                       {item.detail.aplikasi.map((aplikasi) => (
                         <p key={aplikasi.nama}>
-                          {aplikasi.nama} —{" "}
+                          {aplikasi.nama}:{" "}
                           <span className="dh-numeric">
                             {aplikasi.izinBerbahaya} izin berbahaya
                           </span>

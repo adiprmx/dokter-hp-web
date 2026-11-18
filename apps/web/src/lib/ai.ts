@@ -9,6 +9,8 @@
 // dikirim ke POST /api/ai/diagnose di Worker dan kunci API hanya
 // ada di server.
 
+import { labelStatus, statusDariDoctor, statusDariSkor } from "./status-warna";
+
 /** Batas pertanyaan Diagnosis AI per pengguna per hari (K-06). */
 export const BATAS_PERTANYAAN_HARIAN = 20;
 
@@ -130,36 +132,32 @@ export function formatTanggalJam(iso: string, timeZone?: string): string {
 }
 
 /**
- * Kategori skor kesehatan: 80 ke atas "Baik", 50 ke atas "Cukup",
- * di bawah itu "Perlu perhatian" (ambang yang sama dengan
- * fallback aturan backend, apps/api/src/ai/fallback.ts).
+ * Kategori skor kesehatan: 80 ke atas "Baik", 50 ke atas "Perlu
+ * diperhatikan", di bawah itu "Bermasalah" (ambang yang sama dengan
+ * fallback aturan backend, apps/api/src/ai/fallback.ts). Label memakai
+ * kosakata status kanonis K-94 lewat status-warna.ts.
  */
 export function kategoriSkor(skor: number): string {
   if (!Number.isFinite(skor)) {
     return "tidak tersedia";
   }
-  if (skor >= 80) {
-    return "Baik";
-  }
-  if (skor >= 50) {
-    return "Cukup";
-  }
-  return "Perlu perhatian";
+  return labelStatus(statusDariSkor(skor));
 }
 
-const LABEL_STATUS_KOMPONEN: Record<string, string> = {
-  baik: "Baik",
-  cukup: "Cukup",
-  perlu_perhatian: "Perlu perhatian",
-};
-
-/** Label tampilan status komponen pemeriksaan. */
+/**
+ * Label tampilan status komponen pemeriksaan. K-94: label status yang
+ * tampil di UI hanya dari labelStatus() status-warna.ts — fungsi ini
+ * mendelegasikan ke sana agar baris konteks AI memakai kata yang sama
+ * dengan kartu Dashboard untuk keadaan yang sama. Nilai yang tidak
+ * dikenal tetap "tidak tersedia" (perilaku defensif dipertahankan).
+ */
 export function labelStatusKomponen(status: unknown): string {
   if (
-    typeof status === "string" &&
-    Object.prototype.hasOwnProperty.call(LABEL_STATUS_KOMPONEN, status)
+    status === "baik" ||
+    status === "cukup" ||
+    status === "perlu_perhatian"
   ) {
-    return LABEL_STATUS_KOMPONEN[status];
+    return labelStatus(statusDariDoctor(status));
   }
   return "tidak tersedia";
 }

@@ -300,9 +300,12 @@ describe("DashboardPage v2.0", { timeout: 15000 }, () => {
     const cta = wadah?.querySelector('a[href="/wifi"]');
     expect(cta?.textContent).toContain("Mulai dari Dokter WiFi");
     // Grafik + pemeriksaan terakhir memakai teks kanonis tanpa CTA kedua.
+    // Petunjuk pemeriksaan terakhir mengarah ke jalur yang benar-benar
+    // menghasilkan skor (tes WiFi + Simpan laporan), bukan Diagnosis
+    // satu ketuk yang hanya meminta saran AI (K-28).
     expect(wadah?.textContent).toContain("Belum ada data pemeriksaan");
     expect(wadah?.textContent).toContain(
-      "Belum ada pemeriksaan. Ketuk Diagnosis satu ketuk untuk mulai.",
+      "Belum ada pemeriksaan. Jalankan tes WiFi lalu ketuk Simpan laporan untuk melihat skor di sini.",
     );
     // Kelima kartu dokter jujur "Belum ada data" (AI tanpa lencana).
     const bagianDokter = wadah?.querySelector(

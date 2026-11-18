@@ -381,7 +381,7 @@ status-warna, K-94):
 
 ### Catatan penyimpanan
 
-- Bila masuk: "Hasil tersimpan otomatis ke riwayat."
+- Bila masuk: "Ketuk Simpan laporan untuk menyimpan hasil ke riwayat."
 - Bila tanpa akun: "Hasil tidak tersimpan karena Anda belum masuk.
   Masuk untuk menyimpan riwayat."
 

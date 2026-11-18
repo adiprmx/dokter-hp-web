@@ -5,6 +5,7 @@ import {
   buatBodiKeamanan,
   buatBodiPenyimpanan,
   buatBodiPerforma,
+  buatBodiWifi,
   formatPerkiraanJam,
   formatTanggalWaktu,
   gabungAplikasiKeamanan,
@@ -438,6 +439,71 @@ describe("buatBodi*", () => {
       (bodi.ringkasan.keamanan.aplikasi as unknown[]).length,
     ).toBe(1);
   });
+
+  it("membuat body wifi: skor dari rumus, sumber web, status dari skor", () => {
+    // Kasus 12 skor-wifi.md §5: 1000 KB/dtk + 100 ms + bertahan = 80 (Baik).
+    const bodi = buatBodiWifi({
+      kecepatanKbps: 1000,
+      latensiMs: 100,
+      verdictBertahan: "bertahan",
+      kekuatanSinyal: "kuat",
+    });
+    expect(bodi.skor).toBe(80);
+    expect(bodi.ringkasan.wifi).toMatchObject({
+      status: "baik",
+      skor: 80,
+      sumber: "web",
+      kecepatan_unduh_kbps: 1000,
+      latensi_ms: 100,
+      kekuatan_sinyal: "kuat",
+      verdict_bertahan: "bertahan",
+    });
+    // Teks jujur §6 disimpan bersama skor.
+    expect(bodi.ringkasan.wifi.ringkasan_teks).toContain(
+      "Skor ini hanya dari tes WiFi",
+    );
+  });
+
+  it("membuat body wifi tanpa tes bertahan: skor dibatasi 79, status cukup", () => {
+    // Kasus 8 skor-wifi.md §5: 6000 KB/dtk + 40 ms, tanpa verdict = 79.
+    const bodi = buatBodiWifi({
+      kecepatanKbps: 6000,
+      latensiMs: 40,
+      verdictBertahan: null,
+    });
+    expect(bodi.skor).toBe(79);
+    expect(bodi.ringkasan.wifi).toMatchObject({
+      status: "cukup",
+      skor: 79,
+      sumber: "web",
+    });
+    expect(bodi.ringkasan.wifi).not.toHaveProperty("verdict_bertahan");
+  });
+
+  it("membuat body wifi jatuh: skor dibatasi 49, status perlu perhatian", () => {
+    // Kasus 3 skor-wifi.md §5: cepat tapi jatuh = 49.
+    const bodi = buatBodiWifi({
+      kecepatanKbps: 6000,
+      latensiMs: 40,
+      verdictBertahan: "jatuh",
+    });
+    expect(bodi.skor).toBe(49);
+    expect(bodi.ringkasan.wifi).toMatchObject({
+      status: "perlu_perhatian",
+      skor: 49,
+      sumber: "web",
+    });
+  });
+
+  it("membuat body wifi tanpa latensi: field latensi_ms tidak disimpan", () => {
+    const bodi = buatBodiWifi({
+      kecepatanKbps: 2500,
+      latensiMs: null,
+      verdictBertahan: "bertahan",
+    });
+    expect(bodi.skor).toBe(79);
+    expect(bodi.ringkasan.wifi).not.toHaveProperty("latensi_ms");
+  });
 });
 
 describe("uraiEntriDokter", () => {
@@ -582,6 +648,91 @@ describe("uraiEntriDokter", () => {
     expect(entri).toMatchObject({ status: null, sumber: null });
     if (entri && entri.jenis === "performa") {
       expect(entri.detail.kondisi).toBe("lancar");
+    }
+  });
+
+  it("mengurai baris wifi dari API", () => {
+    const entri = uraiEntriDokter("wifi", {
+      id: "id-wifi-1",
+      skor: 80,
+      ringkasan: {
+        wifi: {
+          status: "baik",
+          skor: 80,
+          sumber: "web",
+          kecepatan_unduh_kbps: 1000,
+          latensi_ms: 100,
+          kekuatan_sinyal: "kuat",
+          verdict_bertahan: "bertahan",
+          ringkasan_teks: "Skor ini hanya dari tes WiFi.",
+        },
+      },
+      dibuat_pada: "2026-11-18T08:00:00.000Z",
+    });
+    expect(entri).toMatchObject({
+      id: "id-wifi-1",
+      jenis: "wifi",
+      skor: 80,
+      status: "baik",
+      sumber: "web",
+      dibuatPada: "2026-11-18T08:00:00.000Z",
+    });
+    if (entri && entri.jenis === "wifi") {
+      expect(entri.detail).toEqual({
+        kecepatanUnduhKbps: 1000,
+        latensiMs: 100,
+        kekuatanSinyal: "kuat",
+        verdictBertahan: "bertahan",
+        ringkasanTeks: "Skor ini hanya dari tes WiFi.",
+      });
+    } else {
+      throw new Error("Entri wifi tidak terurai");
+    }
+  });
+
+  it("mengembalikan null untuk baris wifi tanpa komponen wifi", () => {
+    expect(
+      uraiEntriDokter("wifi", {
+        id: "id-wifi-2",
+        skor: 65,
+        ringkasan: { baterai: { status: "cukup", skor: 65, sumber: "manual" } },
+        dibuat_pada: "2026-11-18T08:00:00.000Z",
+      }),
+    ).toBeNull();
+    expect(
+      uraiEntriDokter("wifi", {
+        id: "id-wifi-3",
+        skor: 80,
+        ringkasan: { wifi: "bukan-objek" },
+        dibuat_pada: "2026-11-18T08:00:00.000Z",
+      }),
+    ).toBeNull();
+  });
+
+  it("mengabaikan field detail wifi yang rusak, entri tetap terurai", () => {
+    const entri = uraiEntriDokter("wifi", {
+      id: "id-wifi-4",
+      skor: 79,
+      ringkasan: {
+        wifi: {
+          status: "cukup",
+          skor: 79,
+          sumber: "web",
+          kecepatan_unduh_kbps: "cepat",
+          latensi_ms: -5,
+          kekuatan_sinyal: "super",
+          verdict_bertahan: "stabil",
+          ringkasan_teks: 42,
+          field_tak_dikenal: true,
+        },
+      },
+      dibuat_pada: "2026-11-18T08:00:00.000Z",
+    });
+    expect(entri).toMatchObject({ jenis: "wifi", skor: 79, status: "cukup" });
+    if (entri && entri.jenis === "wifi") {
+      expect(entri.detail).toEqual({});
+    } else {
+      throw new Error("Entri wifi tidak terurai");
     }
   });
 });

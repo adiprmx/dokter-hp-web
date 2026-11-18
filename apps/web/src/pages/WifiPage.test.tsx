@@ -73,11 +73,16 @@ describe("WifiPage (redesign v2.0)", () => {
   let serverSehat = true;
   let riwayat: unknown[] = [];
   let riwayatGalat = false;
+  // Saklar + pencatat simpan skor (Bug 2): POST /api/health-checks
+  // yang dikirim simpanLaporan sesudah laporan WiFi tersimpan.
+  let kesehatanGalat = false;
+  let panggilanKesehatan: Record<string, unknown>[] = [];
+  let urutanPost: string[] = [];
 
   function pasangFetch(): void {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => {
+      vi.fn(async (url: string, init?: { method?: string; body?: unknown }) => {
         if (url.includes("/api/auth/me")) {
           return masuk
             ? responsJson(amplop({ nama: "ADIP RMX" }))
@@ -89,6 +94,35 @@ describe("WifiPage (redesign v2.0)", () => {
                 false,
                 401,
               );
+        }
+        // Cabang health-checks HARUS sebelum "/api/health": includes
+        // "/api/health" ikut cocok dengan "/api/health-checks".
+        if (url.includes("/api/health-checks")) {
+          urutanPost.push("/api/health-checks");
+          if (kesehatanGalat) {
+            return responsJson(
+              {
+                success: false,
+                error: { code: "GALAT", message: "Gagal menyimpan skor." },
+              },
+              false,
+              500,
+            );
+          }
+          const badan = JSON.parse(
+            String(init?.body ?? "{}"),
+          ) as Record<string, unknown>;
+          panggilanKesehatan.push(badan);
+          // Gema badan seperti respons 201 server (agar
+          // simpanEntriDokter bisa mengurai round-trip-nya).
+          return responsJson(
+            amplop({
+              id: "hc-1",
+              skor: badan.skor,
+              ringkasan: badan.ringkasan,
+              dibuat_pada: "2026-11-18T08:00:00.000Z",
+            }),
+          );
         }
         if (url.includes("/api/health")) {
           return serverSehat
@@ -103,6 +137,29 @@ describe("WifiPage (redesign v2.0)", () => {
               );
         }
         if (url.includes("/api/wifi-reports")) {
+          if (init?.method === "POST") {
+            if (url.includes("/samples")) {
+              urutanPost.push("/api/wifi-reports/samples");
+              return responsJson(amplop({ tersimpan: 30 }));
+            }
+            urutanPost.push("/api/wifi-reports");
+            return responsJson(
+              amplop({
+                id: "lap-baru",
+                ssid: null,
+                kecepatan_koneksi_mbps: null,
+                kekuatan_sinyal: null,
+                channel: null,
+                dns: null,
+                ping_ms: null,
+                rekomendasi: null,
+                kecepatan_unduh_kbps: 1200,
+                sumber: "web",
+                durasi_tes_detik: null,
+                dibuat_pada: "2026-11-18T08:00:00.000Z",
+              }),
+            );
+          }
           return riwayatGalat
             ? responsJson(
                 {
@@ -168,6 +225,9 @@ describe("WifiPage (redesign v2.0)", () => {
     serverSehat = true;
     riwayat = [];
     riwayatGalat = false;
+    kesehatanGalat = false;
+    panggilanKesehatan = [];
+    urutanPost = [];
     mockUnduh.mockReset();
     mockLatensi.mockReset();
     mockBertahan.mockReset();
@@ -440,6 +500,26 @@ describe("WifiPage (redesign v2.0)", () => {
     );
   });
 
+  it("masuk: catatan simpan jujur — simpan manual via tombol, tanpa klaim otomatis", async () => {
+    // Bug 1: catatan lama "Hasil tersimpan otomatis ke riwayat."
+    // bohong — simpanLaporan() hanya jalan dari onClick tombol
+    // "Simpan laporan", tidak ada auto-save. Catatan wajib jujur.
+    masuk = true;
+    await pasang();
+    await tunggu(() =>
+      (wadah?.textContent ?? "").includes("Belum ada riwayat tes"),
+    );
+    await act(async () => {
+      tombolDenganTeks("Periksa WiFi sekarang")?.click();
+    });
+    await tunggu(() => tombolDenganTeks("Simpan laporan") !== null);
+    const teks = wadah?.textContent ?? "";
+    expect(teks).toContain(
+      "Ketuk Simpan laporan untuk menyimpan hasil ke riwayat.",
+    );
+    expect(teks).not.toContain("tersimpan otomatis");
+  });
+
   it("masuk tanpa riwayat: empty state riwayat", async () => {
     masuk = true;
     await pasang();
@@ -459,5 +539,65 @@ describe("WifiPage (redesign v2.0)", () => {
       (wadah?.textContent ?? "").includes("Data tidak bisa dimuat."),
     );
     expect(tombolDenganTeks("Coba lagi")).not.toBeNull();
+  });
+
+  it("simpan: sesudah laporan tersimpan, skor WiFi dikirim ke health-checks", async () => {
+    masuk = true;
+    await pasang();
+    await tunggu(() =>
+      (wadah?.textContent ?? "").includes("Belum ada riwayat tes"),
+    );
+    await act(async () => {
+      tombolDenganTeks("Periksa WiFi sekarang")?.click();
+    });
+    await tunggu(() => tombolDenganTeks("Simpan laporan") !== null);
+    await act(async () => {
+      tombolDenganTeks("Simpan laporan")?.click();
+    });
+    await tunggu(() => tombolDenganTeks("Sudah tersimpan") !== null);
+    expect(wadah?.textContent).toContain("Hasil tes tersimpan ke riwayat.");
+    // Urutan: laporan WiFi dulu, skor sesudahnya.
+    expect(urutanPost).toEqual(["/api/wifi-reports", "/api/health-checks"]);
+    expect(panggilanKesehatan.length).toBe(1);
+    // Mock: 1200 KB/detik + 42 ms, tanpa tes bertahan ->
+    // subskor 71,5/100, tertimbang (2x71,5+100)/3 = 81 -> dibatasi 79.
+    const badan = panggilanKesehatan[0];
+    expect(badan.skor).toBe(79);
+    const wifi = (
+      badan.ringkasan as Record<string, Record<string, unknown>>
+    ).wifi;
+    expect(wifi).toMatchObject({
+      status: "cukup",
+      skor: 79,
+      sumber: "web",
+    });
+    expect(wifi.ringkasan_teks).toContain("Skor ini hanya dari tes WiFi");
+  });
+
+  it("simpan: health-checks gagal -> pesan jujur, laporan tetap ditandai tersimpan", async () => {
+    masuk = true;
+    kesehatanGalat = true;
+    await pasang();
+    await tunggu(() =>
+      (wadah?.textContent ?? "").includes("Belum ada riwayat tes"),
+    );
+    await act(async () => {
+      tombolDenganTeks("Periksa WiFi sekarang")?.click();
+    });
+    await tunggu(() => tombolDenganTeks("Simpan laporan") !== null);
+    await act(async () => {
+      tombolDenganTeks("Simpan laporan")?.click();
+    });
+    await tunggu(() =>
+      (wadah?.textContent ?? "").includes(
+        "tetapi skor belum masuk ke dasbor",
+      ),
+    );
+    // Laporan memang tersimpan: tombol tetap "Sudah tersimpan"
+    // (K-110: simpan ulang akan menduplikasi laporan WiFi),
+    // bukan galat total.
+    expect(tombolDenganTeks("Sudah tersimpan")).not.toBeNull();
+    expect(wadah?.textContent).not.toContain("Data tidak bisa disimpan.");
+    expect(urutanPost).toEqual(["/api/wifi-reports", "/api/health-checks"]);
   });
 });

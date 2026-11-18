@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { HTMLAttributes, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { checkApiHealth, panggilApi } from "../lib/api";
+import { buatBodiWifi, simpanEntriDokter } from "../lib/doctor";
 import {
   DURASI_TES_BERTAHAN_DETIK,
   GalatTes,
@@ -605,8 +606,40 @@ export default function WifiPage() {
           }),
         });
       }
+      // Laporan WiFi sudah tersimpan. Skor dasbor disimpan sebagai
+      // entri dokter kind "wifi" (K-108/K-109) — dalam try/catch
+      // TERPISAH: bila POST health-checks gagal, laporan tetap
+      // tersimpan dan pengguna diberi tahu secara jujur (K-110),
+      // bukan galat total dan bukan ditelan diam-diam. Verdict
+      // hanya dipakai bila tes bertahan selesai penuh (sampel
+      // >= 30 + hasil ada); tes batal/gagal = tanpa data (null),
+      // BUKAN "tidak-stabil" (skor-wifi.md §4.6).
+      let skorTersimpan = true;
+      try {
+        await simpanEntriDokter(
+          "wifi",
+          buatBodiWifi({
+            kecepatanKbps: hasil.kecepatanKbps,
+            latensiMs: hasil.latensiMs,
+            verdictBertahan:
+              adaBertahan && bertahan.hasil !== null
+                ? bertahan.hasil.verdict
+                : null,
+            kekuatanSinyal:
+              dbm.nilai === null
+                ? undefined
+                : labelSinyalDariDbm(dbm.nilai),
+          }),
+        );
+      } catch {
+        skorTersimpan = false;
+      }
       setSudahDisimpan(true);
-      setPesanSimpan("Hasil tes tersimpan ke riwayat.");
+      setPesanSimpan(
+        skorTersimpan
+          ? "Hasil tes tersimpan ke riwayat."
+          : "Hasil tes tersimpan ke riwayat, tetapi skor belum masuk ke dasbor. Jalankan tes lagi lalu simpan untuk memasukkan skor.",
+      );
       void muatRiwayat();
     } catch {
       setPesanSimpan("Data tidak bisa disimpan. Coba lagi.");
@@ -948,7 +981,7 @@ export default function WifiPage() {
                           : "Simpan laporan"}
                     </Button>
                     <p className="text-sm text-zinc-400">
-                      Hasil tersimpan otomatis ke riwayat.
+                      Ketuk Simpan laporan untuk menyimpan hasil ke riwayat.
                     </p>
                   </>
                 ) : (

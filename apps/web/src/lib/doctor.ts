@@ -1,4 +1,5 @@
-// Logika domain Dokter HP: Baterai, Penyimpanan, Performa, Keamanan.
+// Logika domain Dokter HP: Baterai, Penyimpanan, Performa, Keamanan,
+// WiFi.
 //
 // File ini berisi fungsi murni (perhitungan, klasifikasi, validasi,
 // penguraian data API) ditambah pemanggil API /health-checks yang tipis.
@@ -6,17 +7,28 @@
 //
 // BATASAN JUJUR WEB: browser tidak bisa membaca sensor HP (level
 // baterai, isi penyimpanan, RAM, CPU, suhu, daftar aplikasi). Data di
-// keempat layar ini adalah RIWAYAT — entri yang dicatat manual oleh
-// pengguna atau berasal dari APK Dokter HP — bukan pengukuran langsung.
-// Tidak ada satu pun fungsi di file ini yang mengklaim membaca sensor.
+// keempat layar manual ini adalah RIWAYAT — entri yang dicatat manual
+// oleh pengguna atau berasal dari APK Dokter HP — bukan pengukuran
+// langsung. Pengecualian: WiFi DIUKUR langsung di web (tes unduh +
+// latensi + tes bertahan), dan skornya dihitung dari hasil ukur itu
+// (lib/skor-wifi.ts). Tidak ada satu pun fungsi di file ini yang
+// mengklaim membaca sensor.
 
 import { fetchJson } from "./api";
+import { klasifikasiSkor } from "./skor";
+import { hitungSkorWifi } from "./skor-wifi";
+import type { VerdictBertahan } from "./speedtest";
 
 // ------------------------------------------------------------------
 // Jenis dan bentuk data
 // ------------------------------------------------------------------
 
-export type DoctorKind = "baterai" | "penyimpanan" | "performa" | "keamanan";
+export type DoctorKind =
+  | "baterai"
+  | "penyimpanan"
+  | "performa"
+  | "keamanan"
+  | "wifi";
 
 export type DoctorStatus = "baik" | "cukup" | "perlu_perhatian";
 
@@ -60,6 +72,24 @@ export interface KeamananDetail {
   aplikasi: AplikasiKeamanan[];
 }
 
+/**
+ * Detail mentah entri WiFi (hasil ukur tes web). Skor dan status
+ * tidak disimpan di sini — skor ada di EntriDasar, status diturunkan
+ * dari skor (statusDariSkorDokter, ambang kanonis 80/50).
+ */
+export interface WifiDetail {
+  /** Kecepatan unduh hasil tes (KB/detik). */
+  kecepatanUnduhKbps?: number;
+  /** Latensi HTTP (milidetik); tidak ada bila tidak berhasil diukur. */
+  latensiMs?: number;
+  /** Kekuatan sinyal dari input manual dBm (bukan hasil ukur tes). */
+  kekuatanSinyal?: "lemah" | "sedang" | "kuat";
+  /** Verdict tes bertahan; tidak ada bila tes tidak dijalankan. */
+  verdictBertahan?: VerdictBertahan;
+  /** Kalimat jujur skor-wifi.md §6 yang disimpan bersama skor. */
+  ringkasanTeks?: string;
+}
+
 interface EntriDasar {
   id: string;
   /** Skor keseluruhan baris health check (0-100), bila ada. */
@@ -91,11 +121,17 @@ export interface EntriKeamanan extends EntriDasar {
   detail: KeamananDetail;
 }
 
+export interface EntriWifi extends EntriDasar {
+  jenis: "wifi";
+  detail: WifiDetail;
+}
+
 export type DoctorEntry =
   | EntriBaterai
   | EntriPenyimpanan
   | EntriPerforma
-  | EntriKeamanan;
+  | EntriKeamanan
+  | EntriWifi;
 
 /** Aplikasi hasil gabungan seluruh entri keamanan, beserta asal datanya. */
 export interface AplikasiDenganAsal extends AplikasiKeamanan {
@@ -589,6 +625,68 @@ export function buatBodiKeamanan(
   };
 }
 
+/**
+ * Status dokter dari skor 0-100 lewat klasifikasi kanonis 80/50
+ * (K-31, lib/skor.ts) — dipakai entri WiFi, yang skornya berasal
+ * dari rumus ukur (bukan bucket skorKomponen 85/65/40 seperti
+ * keempat entri manual).
+ */
+function statusDariSkorDokter(skor: number): DoctorStatus {
+  const kategori = klasifikasiSkor(skor);
+  if (kategori === "baik") return "baik";
+  if (kategori === "cukup") return "cukup";
+  return "perlu_perhatian";
+}
+
+/** Masukan buatBodiWifi — hasil tes WiFi yang sudah ada di WifiPage. */
+export interface MasukanBodiWifi {
+  kecepatanKbps: number;
+  latensiMs: number | null;
+  verdictBertahan: VerdictBertahan | null;
+  kekuatanSinyal?: "lemah" | "sedang" | "kuat";
+}
+
+/**
+ * Body entri WiFi untuk POST /health-checks. Skor dihitung dari
+ * rumus ukur (lib/skor-wifi.ts, docs/skor-wifi.md) — BUKAN bucket
+ * skorKomponen; status diturunkan dari skor (ambang kanonis 80/50);
+ * sumber "web" (tes web, bukan "manual"). Teks ringkasan jujur §6
+ * disimpan di komponen sebagai ringkasan_teks.
+ */
+export function buatBodiWifi(masukan: MasukanBodiWifi): BodiEntriDokter {
+  const hasil = hitungSkorWifi({
+    kecepatanKbps: masukan.kecepatanKbps,
+    latensiMs: masukan.latensiMs,
+    verdictBertahan: masukan.verdictBertahan,
+  });
+  const status = statusDariSkorDokter(hasil.skor);
+  const kecepatanBersih =
+    Number.isFinite(masukan.kecepatanKbps) && masukan.kecepatanKbps > 0
+      ? masukan.kecepatanKbps
+      : 0;
+  const komponen: Record<string, unknown> = {
+    status,
+    skor: hasil.skor,
+    sumber: "web",
+    kecepatan_unduh_kbps: Math.round(kecepatanBersih * 10) / 10,
+    ringkasan_teks: hasil.ringkasan,
+  };
+  if (
+    masukan.latensiMs !== null &&
+    Number.isFinite(masukan.latensiMs) &&
+    masukan.latensiMs >= 0
+  ) {
+    komponen.latensi_ms = Math.round(masukan.latensiMs);
+  }
+  if (masukan.kekuatanSinyal !== undefined) {
+    komponen.kekuatan_sinyal = masukan.kekuatanSinyal;
+  }
+  if (masukan.verdictBertahan !== null) {
+    komponen.verdict_bertahan = masukan.verdictBertahan;
+  }
+  return { skor: hasil.skor, ringkasan: { wifi: komponen } };
+}
+
 // ------------------------------------------------------------------
 // Penguraian respons API
 //
@@ -711,6 +809,41 @@ function uraiDetailKeamanan(komponen: Record<string, unknown>): KeamananDetail {
   return { aplikasi };
 }
 
+const KEKUATAN_SINYAL_VALID: readonly string[] = ["lemah", "sedang", "kuat"];
+const VERDICT_BERTAHAN_VALID: readonly string[] = [
+  "bertahan",
+  "jatuh",
+  "tidak-stabil",
+];
+
+function uraiDetailWifi(komponen: Record<string, unknown>): WifiDetail {
+  const detail: WifiDetail = {};
+  const kecepatan = sebagaiAngka(komponen.kecepatan_unduh_kbps);
+  if (kecepatan !== null && kecepatan >= 0) {
+    detail.kecepatanUnduhKbps = kecepatan;
+  }
+  const latensi = sebagaiAngka(komponen.latensi_ms);
+  if (latensi !== null && latensi >= 0) detail.latensiMs = latensi;
+  if (
+    typeof komponen.kekuatan_sinyal === "string" &&
+    KEKUATAN_SINYAL_VALID.includes(komponen.kekuatan_sinyal)
+  ) {
+    detail.kekuatanSinyal = komponen.kekuatan_sinyal as
+      | "lemah"
+      | "sedang"
+      | "kuat";
+  }
+  if (
+    typeof komponen.verdict_bertahan === "string" &&
+    VERDICT_BERTAHAN_VALID.includes(komponen.verdict_bertahan)
+  ) {
+    detail.verdictBertahan = komponen.verdict_bertahan as VerdictBertahan;
+  }
+  const ringkasanTeks = sebagaiTeks(komponen.ringkasan_teks);
+  if (ringkasanTeks !== undefined) detail.ringkasanTeks = ringkasanTeks;
+  return detail;
+}
+
 /**
  * Mengurai satu baris health check dari API menjadi entri dokter
  * untuk jenis yang diminta. Mengembalikan null bila baris tidak
@@ -775,6 +908,8 @@ export function uraiEntriDokter(
       return { ...dasar, jenis, detail: uraiDetailPerforma(komponenObjek) };
     case "keamanan":
       return { ...dasar, jenis, detail: uraiDetailKeamanan(komponenObjek) };
+    case "wifi":
+      return { ...dasar, jenis, detail: uraiDetailWifi(komponenObjek) };
   }
 }
 

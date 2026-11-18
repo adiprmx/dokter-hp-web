@@ -739,7 +739,8 @@ export default function DashboardPage() {
             </ul>
           ) : tigaTerakhir.length === 0 ? (
             <p className="mt-4 text-sm leading-relaxed text-[var(--color-text-muted)]">
-              Belum ada pemeriksaan. Ketuk Diagnosis satu ketuk untuk mulai.
+              Belum ada pemeriksaan. Jalankan tes WiFi lalu ketuk Simpan
+              laporan untuk melihat skor di sini.
             </p>
           ) : (
             <>

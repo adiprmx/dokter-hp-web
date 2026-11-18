@@ -996,10 +996,11 @@ $WR pages deploy apps/web/dist --project-name=dokter-hp-web
 # URL: https://dokter-hp-web.pages.dev
 ```
 
-Proyek Pages dibuat sekali saja (sudah dibuat Wave 5):
+Proyek Pages dibuat sekali saja (sudah dibuat Wave 5 — flag
+`--production-branch` WAJIB, tanpanya wrangler gagal exit 1):
 
 ```bash
-$WR pages project create dokter-hp-web
+$WR pages project create dokter-hp-web --production-branch main
 ```
 
 ### 9.3 Migrasi D1 (bila ada file migrasi baru)

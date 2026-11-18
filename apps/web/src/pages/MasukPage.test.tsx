@@ -1,8 +1,10 @@
 // apps/web/src/pages/MasukPage.test.tsx
-// Tes MasukPage (K-89): tombol Google menampilkan keadaan jujur
-// "belum disiapkan" bila GET /api/auth/status menjawab
-// google_tersedia false; tombol normal bila true; tombol normal
-// (fail-open) bila pemanggilan status gagal; dan ?error=
+// Tes MasukPage (K-89/K-92): tombol Google menampilkan satu dari
+// empat keadaan jujur — "memuat" (nonaktif netral selagi status
+// belum diketahui), "tersedia" (tombol normal bila google_tersedia
+// true), "belumDisiapkan" (nonaktif bila false), "galat" (nonaktif
+// + tombol "Coba lagi" bila pemanggilan status gagal; retry yang
+// berhasil menampilkan tombol normal). ?error=
 // oauth_belum_disiapkan menampilkan pesan ramah. Pola pasang
 // mengikuti PanduanPage.test.tsx; fetch diganti (stub) seperti
 // api.test.ts — tidak ada panggilan jaringan nyata.
@@ -30,7 +32,7 @@ function responsStatus(googleTersedia: boolean): Response {
   } as unknown as Response;
 }
 
-describe("MasukPage (K-89)", () => {
+describe("MasukPage (K-89/K-92)", () => {
   let wadah: HTMLDivElement | null = null;
   let root: Root | null = null;
 
@@ -63,6 +65,15 @@ describe("MasukPage (K-89)", () => {
     vi.unstubAllGlobals();
   });
 
+  it("tombol nonaktif netral selagi status masih dimuat", async () => {
+    // Janji yang tidak pernah selesai: keadaan tetap "memuat".
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    await pasang();
+    const tombol = wadah?.querySelector("button[disabled]");
+    expect(tombol?.textContent).toBe("Memeriksa login Google…");
+    expect(wadah?.querySelector('a[href*="/api/auth/google"]')).toBeNull();
+  });
+
   it("tombol nonaktif dengan teks jujur bila google_tersedia false", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => responsStatus(false)));
     await pasang();
@@ -82,7 +93,7 @@ describe("MasukPage (K-89)", () => {
     expect(wadah?.querySelector("button[disabled]")).toBeNull();
   });
 
-  it("tombol normal bila pemanggilan status gagal (fail-open)", async () => {
+  it("keadaan galat bila pemanggilan status gagal: tombol nonaktif + Coba lagi", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -90,9 +101,47 @@ describe("MasukPage (K-89)", () => {
       }),
     );
     await pasang();
+    const tombol = wadah?.querySelector("button[disabled]");
+    expect(tombol?.textContent).toBe("Tidak dapat memeriksa login Google");
+    expect(wadah?.textContent).toContain(
+      "Status login Google tidak dapat diperiksa saat ini.",
+    );
+    const tombolCobaLagi = Array.from(
+      wadah?.querySelectorAll("button") ?? [],
+    ).find((b) => b.textContent === "Coba lagi");
+    expect(tombolCobaLagi).toBeDefined();
+    expect(tombolCobaLagi?.disabled).toBe(false);
+    expect(wadah?.querySelector('a[href*="/api/auth/google"]')).toBeNull();
+  });
+
+  it("Coba lagi memanggil ulang status; retry yang berhasil menampilkan tombol normal", async () => {
+    let panggilan = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        panggilan += 1;
+        if (panggilan === 1) throw new Error("jaringan putus");
+        return responsStatus(true);
+      }),
+    );
+    await pasang();
+    expect(
+      wadah?.querySelector("button[disabled]")?.textContent,
+    ).toBe("Tidak dapat memeriksa login Google");
+    const tombolCobaLagi = Array.from(
+      wadah?.querySelectorAll("button") ?? [],
+    ).find((b) => b.textContent === "Coba lagi");
+    await act(async () => {
+      tombolCobaLagi?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    // Biarkan janji fetch retry selesai dan setState ter-flush.
+    await act(async () => {});
     const tautan = wadah?.querySelector('a[href*="/api/auth/google"]');
     expect(tautan?.textContent).toBe("Masuk dengan Google");
     expect(wadah?.querySelector("button[disabled]")).toBeNull();
+    expect(panggilan).toBe(2);
   });
 
   it("menampilkan pesan ramah untuk ?error=oauth_belum_disiapkan", async () => {

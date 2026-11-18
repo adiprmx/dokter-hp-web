@@ -270,9 +270,9 @@ export interface StatusAuth {
 /**
  * Mengambil status ketersediaan login Google. Melempar ApiError
  * bila API tidak terjangkau — pemanggil (MasukPage) memperlakukan
- * kegagalan sebagai "tidak diketahui" dan menampilkan tombol
- * seperti biasa (fail-open; jaring pengaman backend di
- * /api/auth/google yang menangani bila OAuth memang belum siap).
+ * kegagalan sebagai keadaan "galat" (tombol nonaktif + "Coba lagi";
+ * K-92, fail-closed). Jaring pengaman backend di /api/auth/google
+ * tetap menangani bila OAuth memang belum siap.
  */
 export async function ambilStatusAuth(): Promise<StatusAuth> {
   return panggilApi<StatusAuth>("/api/auth/status");

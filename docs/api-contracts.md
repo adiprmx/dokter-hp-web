@@ -630,8 +630,10 @@ masuk yang pasti gagal.
 
 **Respons TIDAK PERNAH berisi nilai secret** — hanya boolean di
 atas. Bila pemanggilan ini gagal (API tidak terjangkau), frontend
-menampilkan tombol Google seperti biasa (fail-open); jaring
-pengaman di 1.1 yang menangani bila OAuth memang belum siap.
+menampilkan tombol nonaktif "Tidak dapat memeriksa login Google"
++ tombol "Coba lagi" (K-92, fail-closed); selagi status masih
+dimuat, tombol nonaktif netral "Memeriksa login Google…". Jaring
+pengaman di 1.1 tetap menangani bila OAuth memang belum siap.
 
 ---
 

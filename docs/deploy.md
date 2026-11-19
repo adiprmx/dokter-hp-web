@@ -486,7 +486,10 @@ Catatan:
 **Langkah 3 — Atur variabel lingkungan Pages.**
 
 Variabel frontend (lihat bagian 6): `VITE_API_BASE_URL` mengarah ke URL
-Worker dari bagian 1.3 langkah 4.
+Worker dari bagian 1.3 langkah 4. Variabel ini WAJIB diatur — guard
+build (regresi K-111, 19 Nov 2026) menggagalkan build Pages bila
+variabel ini kosong/tidak valid, jadi deploy tanpa origin API tidak
+mungkin terjadi diam-diam.
 
 ```bash
 python3 $CFW PATCH "/accounts/$ACCT/pages/projects/dokter-hp-web" -d '{
@@ -702,9 +705,50 @@ Setelah URL API final diketahui (bagian 1.3 langkah 4), persempit
 frontend. Wildcard hanya placeholder agar aplikasi berfungsi sebelum
 subdomain diketahui — bukan konfigurasi akhir.
 
-### 4.5 Kriteria lolos
+### 4.5 Panggilan API in-page (wajib — regresi K-111)
 
-Deploy dinyatakan lolos bila seluruh cek 4.1, 4.3, 4.4, dan 4.2 (sekali,
+**Latar:** bundle K-111 (remote HEAD `21098423`, 19 Nov 2026) dibangun
+tanpa `VITE_API_BASE_URL`, sehingga semua panggilan API dari DALAM
+halaman gagal dan login Google mati di produksi — tetapi verifikasi
+live K-111 hanya mengecek API LANGSUNG (curl ke Worker), jadi regresi
+itu lolos tanpa terdeteksi. Cek di bawah ini WAJIB dijalankan pada
+setiap verifikasi deploy, di kedua mirror. **Cek API langsung (§4.1)
+saja TIDAK CUKUP dan tidak boleh menjadi satu-satunya bukti deploy
+lolos.**
+
+| # | Cek | Perintah / cara | Hasil yang diharapkan |
+|---|---|---|---|
+| 1 | Tombol Google di `/masuk` aktif | Buka `<pages>/masuk` (dan `<vercel>/masuk`) di browser; tunggu sampai pemeriksaan status selesai | Tombol "Masuk dengan Google" tampil **AKTIF** (tautan ke `/api/auth/google`). **Tidak boleh tampil** tombol nonaktif "Tidak dapat memeriksa login Google" (keadaan galat fail-closed — artinya panggilan in-page `GET /api/auth/status` gagal) atau "Masuk dengan Google belum disiapkan" |
+| 2 | Bundle LIVE mengandung origin Worker | Perintah grep di bawah (terhadap bundle yang diunduh dari URL live, bukan bundle lokal) | Jumlah kemunculan `dokter-hp-api.hiroohengkerr.workers.dev` **lebih dari 0**. Hasil **0 = deploy GAGAL**: bundle dibangun tanpa `VITE_API_BASE_URL` — bangun ulang dengan env yang benar (§9.2) lalu deploy ulang |
+| 3 | Cek API langsung bukan bukti tunggal | Laporan verifikasi mencantumkan hasil cek 1 dan 2 per mirror, di samping hasil §4.1 | Laporan tanpa hasil cek 1 dan 2 dianggap **belum lengkap** — deploy belum boleh dinyatakan lolos |
+
+**Langkah konkret cek 2 (Pages; ulangi di Vercel dengan mengganti
+domain):**
+
+```bash
+# Unduh index.html LIVE, ambil nama bundle JS utama, unduh bundle itu, lalu grep origin Worker
+curl -s https://dokter-hp-web.pages.dev/ -o /tmp/dh-index.html
+BUNDLE=$(grep -o '/assets/index-[A-Za-z0-9_-]*\.js' /tmp/dh-index.html | head -1)
+curl -s "https://dokter-hp-web.pages.dev$BUNDLE" -o /tmp/dh-bundle.js
+grep -c "dokter-hp-api.hiroohengkerr.workers.dev" /tmp/dh-bundle.js
+```
+
+Catatan:
+
+- Grep WAJIB terhadap bundle yang diunduh dari URL live — bundle lokal
+  di `apps/web/dist` bisa berbeda dari yang ter-deploy dan tidak
+  membuktikan apa pun tentang produksi.
+- Bila cek 1 menampilkan tombol nonaktif "Tidak dapat memeriksa login
+  Google", jalankan cek 2 sebelum menyimpulkan penyebabnya: hasil grep
+  0 memastikan bundle kehilangan origin API (regresi build), sedangkan
+  hasil grep > 0 mengarahkan ke masalah jaringan/CORS (lanjut ke §4.4).
+- Cek ini tidak menggantikan §4.1–§4.4 — cek-cek itu tetap wajib.
+  §4.5 menutup celah yang tidak ditangkap cek-cek tersebut: frontend
+  yang tidak bisa memanggil API yang sehat.
+
+### 4.6 Kriteria lolos
+
+Deploy dinyatakan lolos bila seluruh cek 4.1, 4.3, 4.4, 4.5, dan 4.2 (sekali,
 setelah deploy pertama) berhasil di kedua mirror. Bila ada cek yang
 gagal, perbaiki penyebabnya dan ulangi cek yang gagal — jangan
 menyatakan deploy selesai dengan cek yang masih gagal.
@@ -911,6 +955,9 @@ Catatan template:
 
 - `VITE_API_BASE_URL` diambil dari **variables** repo (`vars`), bukan
   secrets — URL API adalah nilai publik.
+- Guard build (regresi K-111, 19 Nov 2026) menggagalkan build bila
+  `vars.VITE_API_BASE_URL` belum diatur — atur dulu sebelum memakai
+  template ini.
 - `CLOUDFLARE_API_TOKEN` dan `CLOUDFLARE_ACCOUNT_ID` diambil dari
   **secrets** repo. Atur keduanya di repo: Settings → Secrets and
   variables → Actions. Token yang dipakai adalah token akun
@@ -991,10 +1038,23 @@ $WR deploy
 
 ```bash
 cd ~/workspace/projects/dokter-hp-web
-VITE_API_BASE_URL=https://dokter-hp-api.hiroohengkerr.workers.dev npm run build
+npm run build:prod
 $WR pages deploy apps/web/dist --project-name=dokter-hp-web
 # URL: https://dokter-hp-web.pages.dev
 ```
+
+`npm run build:prod` adalah perintah kanonis build produksi sejak
+19 Nov 2026: ia menyuntik `VITE_API_BASE_URL` origin produksi
+(`https://dokter-hp-api.hiroohengkerr.workers.dev`, nilai publik —
+satu-satunya sumber kebenaran di
+`apps/web/scripts/api-base-url.mjs`) lalu menjalankan `npm run build`.
+Perintah manual `VITE_API_BASE_URL=... npm run build` TIDAK LAGI
+dipakai — perintah itulah yang terlewat pada build K-111 sehingga
+bundle produksi tanpa origin API dan login Google mati (regresi
+K-111). Dua pengaman permanen kini menjaganya: guard `prebuild` +
+plugin Vite menggagalkan build bila var kosong/bukan URL https
+absolut, dan gate `postbuild` memverifikasi origin tertanam di
+`dist/assets/*.js` sebelum dist boleh di-deploy.
 
 Proyek Pages dibuat sekali saja (sudah dibuat Wave 5 — flag
 `--production-branch` WAJIB, tanpanya wrangler gagal exit 1):
@@ -1029,11 +1089,57 @@ curl -s $API/api/health        # 200, "status":"ok"
 curl -s $API/api/ping          # 200, "ok":true
 curl -s $API/api/auth/status   # 200, google_tersedia:false (sampai OAuth ada)
 curl -sI https://dokter-hp-web.pages.dev   # 200
+# Gate isi bundle (sudah jalan otomatis sebagai postbuild; jalankan
+# ulang manual bila perlu): origin API tertanam di dist/assets/*.js
+npm run check:bundle --workspace=apps/web
 ```
+
+Cek di atas saja TIDAK CUKUP (regresi K-111 lolos karena verifikasi
+hanya sampai di sini). WAJIB dilanjutkan dengan cek panggilan API
+in-page §4.5:
+
+```bash
+# Bundle LIVE harus mengandung origin Worker (hasil > 0; 0 = deploy gagal)
+curl -s https://dokter-hp-web.pages.dev/ -o /tmp/dh-index.html
+BUNDLE=$(grep -o '/assets/index-[A-Za-z0-9_-]*\.js' /tmp/dh-index.html | head -1)
+curl -s "https://dokter-hp-web.pages.dev$BUNDLE" -o /tmp/dh-bundle.js
+grep -c "dokter-hp-api.hiroohengkerr.workers.dev" /tmp/dh-bundle.js
+```
+
+Lalu buka `https://dokter-hp-web.pages.dev/masuk` di browser dan pastikan
+tombol "Masuk dengan Google" AKTIF — bukan tombol nonaktif "Tidak dapat
+memeriksa login Google". Ulangi grep bundle + cek `/masuk` di mirror
+Vercel (`https://dokter-hp-web.vercel.app`).
 
 ---
 
 ## Changelog dokumen
+
+### 19 November 2026 — cek verifikasi in-page wajib (regresi K-111, Tim Dokumentasi Verifikasi)
+
+- §4.5 (baru): verifikasi panggilan API IN-PAGE wajib — (a) tombol
+  Google di `/masuk` AKTIF di kedua mirror, (b) bundle yang diunduh
+  dari LIVE mengandung origin Worker (grep > 0), (c) cek API langsung
+  saja TIDAK CUKUP dan tidak boleh jadi satu-satunya bukti. Latar:
+  bundle K-111 (HEAD `21098423`) dibangun tanpa `VITE_API_BASE_URL`
+  sehingga login Google mati di produksi, tetapi lolos verifikasi
+  karena hanya API langsung yang dicek.
+- §4.5 lama ("Kriteria lolos") menjadi §4.6 dan kini mencakup §4.5.
+- §9.5: verifikasi pasca-deploy ulang kini memuat grep bundle live +
+  cek `/masuk` sebagai langkah wajib.
+
+### 19 November 2026 — guard origin API build (K-112, regresi K-111, Tim Perbaikan Build)
+
+- §9.2: perintah kanonis build produksi menjadi `npm run build:prod`
+  (menyuntik `VITE_API_BASE_URL` origin produksi otomatis; perintah
+  manual `VITE_API_BASE_URL=... npm run build` tidak lagi dipakai).
+- Guard permanen: `npm run build` GAGAL bila `VITE_API_BASE_URL`
+  kosong/bukan URL https absolut (hook `prebuild` +
+  plugin Vite di `apps/web/vite.config.ts`); gate `postbuild`
+  memverifikasi origin tertanam di `dist/assets/*.js`.
+  Penyebab regresi: bundle K-111 dibangun tanpa var sehingga semua
+  panggilan API in-page gagal dan login Google mati.
+- CI (`ci.yml`) memakai `npm run build:prod`.
 
 ### 18 November 2026 — deploy v1.0 Wave 5 (Tim Deploy Cloudflare)
 

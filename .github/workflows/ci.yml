@@ -27,7 +27,12 @@ jobs:
         run: npm run typecheck
 
       - name: Build frontend
-        run: npm run build
+        # build:prod menyuntik VITE_API_BASE_URL produksi (nilai publik;
+        # satu-satunya sumber kebenaran di
+        # apps/web/scripts/api-base-url.mjs). Guard prebuild + gate bundle
+        # postbuild jalan otomatis di dalamnya; build TANPA origin API
+        # yang valid gagal (regresi K-111, 19 Nov 2026).
+        run: npm run build:prod
 
       - name: Tes unit frontend dan API
         run: npm run test

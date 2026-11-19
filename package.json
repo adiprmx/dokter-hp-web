@@ -8,7 +8,8 @@
   "private": true,
   "scripts": {
     "build": "npm run build --workspace=apps/web",
-    "build:all": "npm run build --workspace=apps/web && npm run typecheck --workspace=apps/api",
+    "build:all": "npm run build:prod --workspace=apps/web && npm run typecheck --workspace=apps/api",
+    "build:prod": "npm run build:prod --workspace=apps/web",
     "dev": "npm run dev --workspace=apps/web",
     "dev:api": "npm run dev --workspace=apps/api",
     "preview": "npm run preview --workspace=apps/web",

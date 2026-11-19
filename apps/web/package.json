@@ -26,7 +26,11 @@
   "private": true,
   "scripts": {
     "build": "tsc --noEmit && vite build",
+    "build:prod": "node scripts/build-prod.mjs",
+    "check:bundle": "node scripts/check-bundle.mjs",
     "dev": "vite",
+    "postbuild": "node scripts/check-bundle.mjs",
+    "prebuild": "node scripts/check-env.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

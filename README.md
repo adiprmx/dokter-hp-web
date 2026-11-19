@@ -59,7 +59,8 @@ di `apps/web/.env.example`.
 Perintah lain:
 
 ```bash
-npm run build        # build produksi frontend (termasuk typecheck)
+npm run build:prod   # build produksi frontend (suntik origin API + typecheck + gate bundle)
+npm run build        # build frontend — butuh VITE_API_BASE_URL, gagal bila kosong (guard K-112)
 npm run typecheck    # typecheck frontend + API
 npm run test         # tes unit frontend + API
 npm run preview      # pratinjau hasil build frontend
@@ -89,7 +90,7 @@ data tetap konsisten.
    ```
 2. Deploy API: `npm run deploy --workspace=apps/api`
 3. Deploy frontend ke Cloudflare Pages dari direktori `apps/web`
-   (build command `npm run build`, output `dist`).
+   (build command `npm run build:prod`, output `dist`).
 
 ### Vercel (mirror)
 

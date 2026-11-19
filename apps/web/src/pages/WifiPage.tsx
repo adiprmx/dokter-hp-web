@@ -587,7 +587,7 @@ export default function WifiPage() {
         ping_ms:
           hasil.latensiMs === null ? null : Math.round(hasil.latensiMs),
         rekomendasi: rangkumRekomendasi(masukan),
-        kecepatan_unduh_kbps: Math.round(hasil.kecepatanKbps * 10) / 10,
+        kecepatan_unduh_kbps: hasil.kecepatanKbps,
         sumber: "web",
         durasi_tes_detik: adaBertahan ? DURASI_TES_BERTAHAN_DETIK : null,
       };
@@ -601,7 +601,7 @@ export default function WifiPage() {
           body: JSON.stringify({
             samples: bertahan.sampel.map((s) => ({
               detik_ke: s.detikKe,
-              kecepatan_kbps: Math.round(s.kbps * 10) / 10,
+              kecepatan_kbps: s.kbps,
             })),
           }),
         });

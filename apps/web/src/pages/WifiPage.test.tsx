@@ -11,6 +11,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { formatKecepatan } from "../lib/speedtest";
 import WifiPage from "./WifiPage";
 
 // Batas per tes 20 detik (preseden: AiPage.test.tsx). Bukan
@@ -78,6 +79,11 @@ describe("WifiPage (redesign v2.0)", () => {
   let kesehatanGalat = false;
   let panggilanKesehatan: Record<string, unknown>[] = [];
   let urutanPost: string[] = [];
+  // Pencatat payload simpan WiFi (K-111): badan POST
+  // /api/wifi-reports dan sampel POST .../samples, untuk
+  // membuktikan nilai mentah yang dikirim (tanpa pra-pembulatan).
+  let panggilanWifi: Record<string, unknown>[] = [];
+  let panggilanSampel: Record<string, unknown>[][] = [];
 
   function pasangFetch(): void {
     vi.stubGlobal(
@@ -140,9 +146,29 @@ describe("WifiPage (redesign v2.0)", () => {
           if (init?.method === "POST") {
             if (url.includes("/samples")) {
               urutanPost.push("/api/wifi-reports/samples");
+              const badanSampel = JSON.parse(
+                String(init?.body ?? "{}"),
+              ) as { samples: Record<string, unknown>[] };
+              panggilanSampel.push(badanSampel.samples);
               return responsJson(amplop({ tersimpan: 30 }));
             }
             urutanPost.push("/api/wifi-reports");
+            const badanWifi = JSON.parse(
+              String(init?.body ?? "{}"),
+            ) as Record<string, unknown>;
+            panggilanWifi.push(badanWifi);
+            // Gema ke riwayat seperti server: simpanLaporan
+            // memuat ulang riwayat sesudah simpan, jadi entri
+            // tersimpan tampil (K-111: string tampilnya wajib
+            // sama dengan halaman hasil).
+            riwayat = [
+              ...riwayat,
+              {
+                id: "lap-baru",
+                ...badanWifi,
+                dibuat_pada: "2026-11-18T08:00:00.000Z",
+              },
+            ];
             return responsJson(
               amplop({
                 id: "lap-baru",
@@ -228,6 +254,8 @@ describe("WifiPage (redesign v2.0)", () => {
     kesehatanGalat = false;
     panggilanKesehatan = [];
     urutanPost = [];
+    panggilanWifi = [];
+    panggilanSampel = [];
     mockUnduh.mockReset();
     mockLatensi.mockReset();
     mockBertahan.mockReset();
@@ -599,5 +627,129 @@ describe("WifiPage (redesign v2.0)", () => {
     expect(tombolDenganTeks("Sudah tersimpan")).not.toBeNull();
     expect(wadah?.textContent).not.toContain("Data tidak bisa disimpan.");
     expect(urutanPost).toEqual(["/api/wifi-reports", "/api/health-checks"]);
+  });
+
+  it("regresi K-111: 586,45 mentah tampil 586 di hasil dan riwayat, payload mentah", async () => {
+    // Pemicu bug: 586,45 dibulatkan dulu ke 586,5 saat simpan,
+    // lalu formatKecepatan(586,5) = "587 KB/detik" di riwayat
+    // sementara halaman hasil menampilkan "586 KB/detik".
+    // Payload wajib membawa nilai mentah; satu-satunya titik
+    // pembulatan kecepatan adalah formatKecepatan saat tampil.
+    // Tes ini GAGAL pada kode lama (payload 586,5 + riwayat 587).
+    masuk = true;
+    mockUnduh.mockResolvedValue({
+      kbps: 586.45,
+      byte: 600000,
+      durasiMs: 1023,
+    });
+    mockBertahan.mockImplementation(async (onSampel: (s: unknown) => void) => {
+      const daftar = Array.from({ length: 30 }, (_, i) => ({
+        detikKe: i,
+        kbps: 586.45,
+      }));
+      daftar.forEach((s) => onSampel(s));
+      return daftar;
+    });
+    await pasang();
+    await tunggu(() =>
+      (wadah?.textContent ?? "").includes("Belum ada riwayat tes"),
+    );
+    await act(async () => {
+      tombolDenganTeks("Periksa WiFi sekarang")?.click();
+    });
+    await tunggu(() => wadah?.querySelector("#judul-hasil") !== null);
+    // Halaman hasil: hero "586" + "KB/detik", klasifikasi Cukup.
+    const seksiHasil = wadah?.querySelector(
+      'section[aria-labelledby="judul-hasil"]',
+    );
+    expect(seksiHasil?.textContent).toContain("586");
+    expect(seksiHasil?.textContent).toContain("KB/detik");
+    expect(seksiHasil?.textContent).toContain("Cukup");
+    expect(formatKecepatan(586.45)).toBe("586 KB/detik");
+    // Tes bertahan penuh (30 sampel) agar sampel ikut tersimpan.
+    await act(async () => {
+      tombolDenganTeks("Tes bertahan 30 detik")?.click();
+    });
+    await tunggu(
+      () => wadah?.querySelector('[data-testid="panel-verdict"]') !== null,
+    );
+    await act(async () => {
+      tombolDenganTeks("Simpan laporan")?.click();
+    });
+    await tunggu(() => tombolDenganTeks("Sudah tersimpan") !== null);
+    // Payload membawa nilai MENTAH, bukan 586,5 hasil bulat.
+    expect(panggilanWifi.length).toBe(1);
+    expect(panggilanWifi[0].kecepatan_unduh_kbps).toBe(586.45);
+    // Sampel bertahan ikut mentah (30 sampel @ 586,45).
+    expect(panggilanSampel.length).toBe(1);
+    expect(panggilanSampel[0].length).toBe(30);
+    for (const sampel of panggilanSampel[0]) {
+      expect(sampel.kecepatan_kbps).toBe(586.45);
+    }
+    // Entri riwayat dari nilai tersimpan tampil IDENTIK dengan
+    // halaman hasil — bukan "587 KB/detik" seperti kode lama.
+    expect(formatKecepatan(
+      panggilanWifi[0].kecepatan_unduh_kbps as number,
+    )).toBe("586 KB/detik");
+    await tunggu(() =>
+      (wadah?.textContent ?? "").includes(
+        "Tes WiFi, 586 KB/detik (Cukup)",
+      ),
+    );
+    const seksiRiwayat = wadah?.querySelector(
+      'section[aria-labelledby="judul-riwayat"]',
+    );
+    expect(seksiRiwayat?.textContent).toContain(
+      "Tes WiFi, 586 KB/detik (Cukup)",
+    );
+    expect(seksiRiwayat?.textContent).not.toContain("587 KB/detik");
+  });
+
+  it("regresi K-111 (tepi): 100,45 mentah tampil 100 di hasil dan riwayat", async () => {
+    // Nilai tepi: 100,45 ada di batas cabang >= 100 KB/detik
+    // (toFixed(0)). Kode lama: payload 100,5 -> riwayat
+    // "101 KB/detik", hasil "100 KB/detik". Kode baru: keduanya
+    // "100 KB/detik" dari nilai mentah 100,45.
+    masuk = true;
+    mockUnduh.mockResolvedValue({
+      kbps: 100.45,
+      byte: 102880,
+      durasiMs: 1024,
+    });
+    await pasang();
+    await tunggu(() =>
+      (wadah?.textContent ?? "").includes("Belum ada riwayat tes"),
+    );
+    await act(async () => {
+      tombolDenganTeks("Periksa WiFi sekarang")?.click();
+    });
+    await tunggu(() => wadah?.querySelector("#judul-hasil") !== null);
+    const seksiHasil = wadah?.querySelector(
+      'section[aria-labelledby="judul-hasil"]',
+    );
+    expect(seksiHasil?.textContent).toContain("100");
+    expect(seksiHasil?.textContent).toContain("KB/detik");
+    expect(formatKecepatan(100.45)).toBe("100 KB/detik");
+    await act(async () => {
+      tombolDenganTeks("Simpan laporan")?.click();
+    });
+    await tunggu(() => tombolDenganTeks("Sudah tersimpan") !== null);
+    expect(panggilanWifi.length).toBe(1);
+    expect(panggilanWifi[0].kecepatan_unduh_kbps).toBe(100.45);
+    expect(formatKecepatan(
+      panggilanWifi[0].kecepatan_unduh_kbps as number,
+    )).toBe("100 KB/detik");
+    await tunggu(() =>
+      (wadah?.textContent ?? "").includes(
+        "Tes WiFi, 100 KB/detik (Lambat)",
+      ),
+    );
+    const seksiRiwayat = wadah?.querySelector(
+      'section[aria-labelledby="judul-riwayat"]',
+    );
+    expect(seksiRiwayat?.textContent).toContain(
+      "Tes WiFi, 100 KB/detik (Lambat)",
+    );
+    expect(seksiRiwayat?.textContent).not.toContain("101 KB/detik");
   });
 });
